@@ -9,9 +9,7 @@ RUN apt-get update && apt-get install -y \
     wget \
     ca-certificates \
     fonts-liberation \
-    libappindicator3-1 \
     libasound2 \
-    libatk-bridge2.0-0 \
     libatk1.0-0 \
     libcups2 \
     libdbus-1-3 \
@@ -22,7 +20,7 @@ RUN apt-get update && apt-get install -y \
     libxrandr2 \
     xdg-utils \
     --no-install-recommends && \
-    rm -rf /var/lib/apt/lists/*
+    rm -rf /var/lib/apt/lists/* || cat /var/log/apt/*
 
 # Copy package.json and pnpm-lock.yaml
 COPY package.json pnpm-lock.yaml ./
