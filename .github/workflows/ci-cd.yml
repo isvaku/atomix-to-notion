@@ -55,10 +55,17 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+      - name: Extract version from package.json
+        id: extract_version
+        run: |
+          echo "::set-output name=version::$(jq -r .version package.json)"
+
       - name: Build and push Docker image
         uses: docker/build-push-action@v6
         with:
           platforms: linux/amd64,linux/arm64
           context: .
           push: true
-          tags: ${{ secrets.DOCKER_USERNAME }}/atomix-to-notion:latest
+          tags: |
+            ${{ secrets.DOCKER_USERNAME }}/atomix-to-notion:latest
+            ${{ secrets.DOCKER_USERNAME }}/atomix-to-notion:${{ steps.extract_version.outputs.version }}
