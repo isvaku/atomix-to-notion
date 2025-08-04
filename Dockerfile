@@ -1,5 +1,5 @@
-# Use the official Node.js latest slim image as the base image
-FROM node:24-slim
+# Use an ARM-compatible Node.js image for Raspberry Pi
+FROM --platform=linux/arm64 node:24-bullseye
 
 # Set the working directory
 WORKDIR /app
@@ -33,8 +33,8 @@ RUN npm install -g pnpm@9.11.0 && pnpm install --frozen-lockfile
 # Copy the rest of the application code
 COPY . .
 
-# Install Puppeteer browser
-RUN npx puppeteer install chromium
+# Install Puppeteer browser with ARM-compatible Chromium
+RUN npx puppeteer install --platform=linux/arm64 chromium
 
 # Set the default command to run the application
 CMD ["pnpm", "start"]
