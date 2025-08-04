@@ -101,7 +101,8 @@ export class WebScraper {
           await page.waitForSelector(linkSelector, { timeout: 5000 });
         } catch (error) {
           logger.warn(
-            `Selector ${linkSelector} not found on page ${currentPage}`
+            `Selector ${linkSelector} not found on page ${currentPage}`,
+            error
           );
           break;
         }
@@ -210,7 +211,7 @@ export class WebScraper {
         try {
           await page.waitForSelector(contentSelectors[0], { timeout: 5000 });
         } catch (error) {
-          logger.warn(`Content selector not found for ${url}`);
+          logger.warn(`Content selector not found for ${url}:`, error);
         }
       }
 
@@ -229,28 +230,6 @@ export class WebScraper {
               (el) => el.textContent?.trim() || ""
             );
             if (text) return text;
-          } catch {
-            /* ignore */
-          }
-        }
-        return "";
-      }
-
-      // Helper to get attribute from selectors
-      async function getAttributeFromSelectors(
-        selectorString: string,
-        attribute: string
-      ): Promise<string> {
-        if (!selectorString) return "";
-        const selectorList = selectorString.split(", ");
-        for (const selector of selectorList) {
-          try {
-            const attr = await page?.$eval(
-              selector,
-              (el, attr) => el.getAttribute(attr as string) || "",
-              attribute
-            );
-            if (attr) return attr;
           } catch {
             /* ignore */
           }

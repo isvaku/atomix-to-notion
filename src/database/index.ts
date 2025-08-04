@@ -6,8 +6,6 @@ class Database {
   private static instance: Database;
   private isConnected: boolean = false;
 
-  private constructor() {}
-
   public static getInstance(): Database {
     if (!Database.instance) {
       Database.instance = new Database();

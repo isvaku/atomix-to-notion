@@ -10,6 +10,19 @@ import { config } from "../config";
 import { logger } from "./logger";
 import { IEntry } from "../models";
 
+type RichText = {
+  type: "text";
+  text: {
+    content: string;
+    link?: { url: string };
+  };
+  annotations?: {
+    bold?: boolean;
+    italic?: boolean;
+    underline?: boolean;
+  };
+};
+
 export class NotionClient {
   private notion: Client;
   private databaseId: string;
@@ -81,7 +94,7 @@ export class NotionClient {
 
         const processNode = (
           node: HTMLElement | TextNode,
-          richTextArray: any[] = []
+          richTextArray: RichText[] = []
         ): void => {
           if (node instanceof TextNode) {
             const textContent = node.text.trim();
@@ -96,7 +109,7 @@ export class NotionClient {
           } else if (node instanceof HTMLElement) {
             switch (node.tagName) {
               case "P": {
-                const paragraphRichText: any[] = [];
+                const paragraphRichText: RichText[] = [];
                 node.childNodes.forEach((child) => {
                   if (
                     child instanceof HTMLElement ||
@@ -106,7 +119,7 @@ export class NotionClient {
                   }
                 });
                 if (paragraphRichText.length > 0) {
-                  let currentRichText: any[] = [];
+                  let currentRichText: RichText[] = [];
                   let currentLength = 0;
 
                   paragraphRichText.forEach((richText) => {
@@ -201,7 +214,7 @@ export class NotionClient {
               case "I":
               case "EM":
               case "U": {
-                const annotation: any = {};
+                const annotation: RichText["annotations"] = {};
                 if (node.tagName === "B" || node.tagName === "STRONG") {
                   annotation.bold = true;
                 } else if (node.tagName === "I" || node.tagName === "EM") {
@@ -210,7 +223,7 @@ export class NotionClient {
                   annotation.underline = true;
                 }
 
-                const childRichText: any[] = [];
+                const childRichText: RichText[] = [];
                 node.childNodes.forEach((child) => {
                   if (
                     child instanceof HTMLElement ||

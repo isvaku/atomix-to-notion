@@ -11,7 +11,7 @@
 		"notion-sync": "tsx src/index.ts --notion-sync-once",
 		"setup": "tsx src/scripts/setup.ts",
 		"test": "jest",
-		"lint": "eslint src/**/*.ts",
+		"lint": "eslint",
 		"clean": "rimraf dist"
 	},
 	"keywords": [
