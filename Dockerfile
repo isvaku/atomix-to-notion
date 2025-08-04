@@ -1,0 +1,40 @@
+# Use the official Node.js latest slim image as the base image
+FROM node:24-slim
+
+# Set the working directory
+WORKDIR /app
+
+# Install necessary dependencies for Puppeteer
+RUN apt-get update && apt-get install -y \
+    wget \
+    ca-certificates \
+    fonts-liberation \
+    libappindicator3-1 \
+    libasound2 \
+    libatk-bridge2.0-0 \
+    libatk1.0-0 \
+    libcups2 \
+    libdbus-1-3 \
+    libgdk-pixbuf2.0-0 \
+    libnspr4 \
+    libnss3 \
+    libxcomposite1 \
+    libxrandr2 \
+    xdg-utils \
+    --no-install-recommends && \
+    rm -rf /var/lib/apt/lists/*
+
+# Copy package.json and pnpm-lock.yaml
+COPY package.json pnpm-lock.yaml ./
+
+# Install pnpm globally
+RUN npm install -g pnpm && pnpm install --frozen-lockfile
+
+# Copy the rest of the application code
+COPY . .
+
+# Install Puppeteer browser
+RUN npx puppeteer browsers install chromium
+
+# Set the default command to run the application
+CMD ["pnpm", "start"]
