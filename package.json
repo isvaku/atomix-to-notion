@@ -26,26 +26,26 @@
 	"license": "MIT",
 	"dependencies": {
 		"@notionhq/client": "^4.0.1",
-		"axios": "^1.7.2",
-		"cheerio": "^1.0.0-rc.12",
-		"cron": "^3.1.6",
-		"dotenv": "^16.4.5",
+		"axios": "^1.11.0",
+		"cheerio": "^1.1.2",
+		"cron": "^3.5.0",
+		"dotenv": "^16.6.1",
 		"mongoose": "^8.17.0",
 		"node-html-parser": "^7.0.1",
 		"puppeteer": "^24.15.0",
-		"winston": "^3.13.0"
+		"winston": "^3.17.0"
 	},
 	"devDependencies": {
-		"@types/jest": "^29.5.12",
-		"@types/node": "^20.14.8",
+		"@types/jest": "^29.5.14",
+		"@types/node": "^20.19.9",
 		"@typescript-eslint/eslint-plugin": "^8.38.0",
 		"@typescript-eslint/parser": "^8.38.0",
 		"eslint": "^9.32.0",
 		"jest": "^30.0.5",
-		"rimraf": "^5.0.7",
-		"ts-jest": "^29.1.5",
-		"tsx": "^4.15.7",
-		"typescript": "^5.5.2"
+		"rimraf": "^5.0.10",
+		"ts-jest": "^29.4.1",
+		"tsx": "^4.20.3",
+		"typescript": "^5.9.2"
 	},
 	"engines": {
 		"node": ">=18.0.0",
