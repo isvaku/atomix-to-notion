@@ -34,7 +34,7 @@ RUN npm install -g pnpm@9.11.0 && pnpm install --frozen-lockfile
 COPY . .
 
 # Install Puppeteer browser
-RUN npx puppeteer browsers install chromium
+RUN npx puppeteer install chromium
 
 # Set the default command to run the application
 CMD ["pnpm", "start"]
