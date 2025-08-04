@@ -1,5 +1,4 @@
-# Use an ARM-compatible Node.js image for Raspberry Pi
-FROM --platform=linux/arm64 node:24-bullseye
+FROM node:24-bullseye AS build
 
 # Set the working directory
 WORKDIR /app
@@ -20,7 +19,7 @@ RUN apt-get update && apt-get install -y \
     libxrandr2 \
     xdg-utils \
     --no-install-recommends && \
-    rm -rf /var/lib/apt/lists/* || cat /var/log/apt/*
+    rm -rf /var/lib/apt/lists/*
 
 # Copy package.json and pnpm-lock.yaml
 COPY package.json pnpm-lock.yaml ./
@@ -32,7 +31,7 @@ RUN npm install -g pnpm@9.11.0 && pnpm install --frozen-lockfile
 COPY . .
 
 # Install Puppeteer browser with ARM-compatible Chromium
-RUN npx puppeteer install --platform=linux/arm64 chromium
+RUN npx puppeteer install chromium
 
 # Set the default command to run the application
 CMD ["pnpm", "start"]
