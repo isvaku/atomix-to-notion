@@ -12,7 +12,9 @@
 		"setup": "tsx src/scripts/setup.ts",
 		"test": "jest",
 		"lint": "eslint",
-		"clean": "rimraf dist"
+		"clean": "rimraf dist",
+		"build-docker-image": "docker build -t isvaku/$npm_package_name:$npm_package_version -t isvaku/$npm_package_name:latest .",
+		"push-docker-image": "docker push isvaku/$npm_package_name --all-tags"
 	},
 	"keywords": [
 		"gaming",
