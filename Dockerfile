@@ -27,8 +27,8 @@ RUN apt-get update && apt-get install -y \
 # Copy package.json and pnpm-lock.yaml
 COPY package.json pnpm-lock.yaml ./
 
-# Install pnpm globally
-RUN npm install -g pnpm && pnpm install --frozen-lockfile
+# Install pnpm globally with a specific version to match the lockfile
+RUN npm install -g pnpm@9.11.0 && pnpm install --frozen-lockfile
 
 # Copy the rest of the application code
 COPY . .
