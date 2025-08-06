@@ -41,6 +41,7 @@ FROM node:24-bullseye AS production
 WORKDIR /app
 
 RUN apt-get update && apt-get install -y \
+    wget \
     ca-certificates \
     fonts-liberation \
     libasound2 \
