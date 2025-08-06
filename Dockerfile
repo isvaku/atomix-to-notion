@@ -62,4 +62,4 @@ COPY --from=build /app/dist ./dist
 COPY --from=build /app/node_modules ./node_modules
 
 # Set the default command to run the application
-CMD ["pnpm", "start"]
+CMD ["npm", "start"]
