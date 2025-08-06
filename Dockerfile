@@ -60,7 +60,6 @@ RUN apt-get update && apt-get install -y \
 COPY --from=build /app/package.json /app/pnpm-lock.yaml ./
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/node_modules ./node_modules
-COPY --from=build /app/.env ./
 
 # Set the default command to run the application
 CMD ["pnpm", "start"]
