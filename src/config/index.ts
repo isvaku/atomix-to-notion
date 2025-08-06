@@ -19,6 +19,7 @@ export interface Source {
   listingPath: string;
   nextPageSelector?: string; // Optional field
   nextPageLoadsInSamePage: boolean;
+  dateFormat?: string; // Optional field
   selectors: SourceSelectors;
 }
 
@@ -66,6 +67,7 @@ export const config = {
       listingPath: "/seccion/noticias",
       nextPageSelector: "div.pagination-center > span", // Example selector for next page
       nextPageLoadsInSamePage: true, // Navigate to new page
+      dateFormat: "DD/MM/YYYY h:mm a",
       selectors: {
         articleLinks: 'div.archivefit .post div.twelve.columns h2 a[href*="/"]',
         title: "h1.featured-image-narrow-title",

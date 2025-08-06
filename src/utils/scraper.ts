@@ -1,6 +1,10 @@
 import puppeteer, { Browser, Page } from "puppeteer";
 import { config, Source } from "../config";
 import { logger } from "./logger";
+import dayjs from "dayjs";
+import customParseFormat from "dayjs/plugin/customParseFormat";
+
+dayjs.extend(customParseFormat);
 
 export interface ScrapedArticle {
   entryId: string;
@@ -294,8 +298,19 @@ export class WebScraper {
         }
       }
 
-      const dateText = await getTextFromSelectors(source.selectors.date);
-      const parsedDate = new Date(dateText);
+      let dateText = await getTextFromSelectors(source.selectors.date);
+      let parsedDate: Date;
+      if (source.dateFormat && dateText) {
+        if (source.name === "Atomix") {
+          dateText = dateText.replace(".", "").trim();
+        }
+        const dayjsDate = dayjs(dateText, source.dateFormat);
+        parsedDate = dayjsDate.isValid()
+          ? dayjsDate.toDate()
+          : dayjs().toDate();
+      } else {
+        parsedDate = new Date(dateText);
+      }
 
       const articleData: ScrapedArticle = {
         entryId,
@@ -304,7 +319,7 @@ export class WebScraper {
         content: await getContentFromSelectors(source.selectors.content),
         summary: await getTextFromSelectors(source.selectors.summary ?? ""),
         link: url,
-        date: isNaN(parsedDate.getTime()) ? new Date() : parsedDate,
+        date: parsedDate,
       };
 
       logger.info(`Scraped article data from ${url}`);
