@@ -1,0 +1,15 @@
+version: "3.8"
+
+services:
+  atomix-to-notion:
+    image: isvaku/atomix-to-notion:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      NODE_ENV: production
+      NOTION_API_KEY: ${NOTION_API_KEY}
+      MONGODB_URI: ${MONGODB_URI}
+      NOTION_TOKEN: ${NOTION_TOKEN}
+      NOTION_DATABASE_ID: ${NOTION_DATABASE_ID}
+    restart: unless-stopped

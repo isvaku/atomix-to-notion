@@ -26,7 +26,6 @@ export const config = {
   // Database Configuration
   database: {
     uri: process.env.MONGODB_URI || "localhost:27017/gaming-news-crawler",
-    name: process.env.DB_NAME || "gaming-news-crawler",
     options: {
       maxPoolSize: 10,
       serverSelectionTimeoutMS: 5000,
@@ -56,7 +55,7 @@ export const config = {
   // Notion Sync Configuration
   notionSync: {
     interval: process.env.NOTION_SYNC_INTERVAL || "0 */4 * * *", // Every 4 hours
-    batchSize: 100,
+    batchSize: parseInt(process.env.NOTION_SYNC_BATCH_SIZE || "10"),
   },
 
   // Gaming News Sources
