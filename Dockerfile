@@ -56,11 +56,13 @@ RUN apt-get update && apt-get install -y \
     --no-install-recommends && \
     rm -rf /var/lib/apt/lists/*
 
+	
+COPY --from=build /app/package.json /app/pnpm-lock.yaml ./
+	
+RUN npm install -g pnpm@9.11.0 && pnpm install --frozen-lockfile
 RUN npx puppeteer install chromium
 
-COPY --from=build /app/package.json /app/pnpm-lock.yaml ./
 COPY --from=build /app/dist ./dist
-COPY --from=build /app/node_modules ./node_modules
 
 # Set the default command to run the application
 CMD ["npm", "start"]
