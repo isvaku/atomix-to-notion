@@ -34,7 +34,6 @@ COPY . .
 RUN pnpm build
 
 # Install Puppeteer browser with ARM-compatible Chromium
-RUN npx puppeteer install chromium
 
 # Production image
 FROM node:24-bullseye AS production
@@ -56,6 +55,8 @@ RUN apt-get update && apt-get install -y \
     xdg-utils \
     --no-install-recommends && \
     rm -rf /var/lib/apt/lists/*
+
+RUN npx puppeteer install chromium
 
 COPY --from=build /app/package.json /app/pnpm-lock.yaml ./
 COPY --from=build /app/dist ./dist
