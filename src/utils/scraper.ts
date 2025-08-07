@@ -38,6 +38,7 @@ export class WebScraper {
     if (!this.browser) {
       this.browser = await puppeteer.launch({
         headless: true,
+        browser: "firefox",
         args: [
           "--no-sandbox",
           "--disable-setuid-sandbox",

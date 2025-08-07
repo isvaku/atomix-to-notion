@@ -51,7 +51,14 @@ RUN apt-get update && apt-get install -y \
     libnspr4 \
     libnss3 \
     libxcomposite1 \
-    libxrandr2 \
+    libxrandr2 \	  
+  	libatk-bridge2.0-0 \
+  	libdrm2 \
+  	libgbm1 \
+  	libgtk-3-0 \  
+  	libu2f-udev \
+  	libxshmfence1 \
+  	libglu1-mesa \
     xdg-utils \
     --no-install-recommends && \
     rm -rf /var/lib/apt/lists/*
@@ -59,8 +66,8 @@ RUN apt-get update && apt-get install -y \
 	
 COPY --from=build /app/package.json /app/pnpm-lock.yaml ./
 	
-RUN npm install -g pnpm@9.11.0 && pnpm install --frozen-lockfile
-RUN npx puppeteer install chromium
+RUN npm install -g pnpm@9.11.0 && PUPPETEER_PRODUCT=firefox pnpm install --frozen-lockfile --prod
+RUN npx puppeteer browsers install firefox
 
 COPY --from=build /app/dist ./dist
 

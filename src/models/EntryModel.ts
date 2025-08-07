@@ -52,6 +52,5 @@ const EntrySchema: Schema = new Schema(
 // Create indexes for better query performance
 EntrySchema.index({ entryDate: -1 });
 EntrySchema.index({ created: 1 });
-EntrySchema.index({ link: 1 });
 
 export default mongoose.model<IEntry>("Entry", EntrySchema);
