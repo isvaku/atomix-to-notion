@@ -120,10 +120,9 @@ export class WebScraper {
 
             elements.forEach((element: Element) => {
               const href = element.getAttribute("href");
+              const isAbsolute = href?.startsWith("http");
               if (href) {
-                const absoluteUrl = href.startsWith("http")
-                  ? href
-                  : `${baseUrl}${href}`;
+                const absoluteUrl = isAbsolute ? href : `${baseUrl}/${href}`;
                 links.push(absoluteUrl);
               }
             });

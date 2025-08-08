@@ -90,7 +90,8 @@ export class CrawlerJob {
                 link,
                 source
               );
-              if (!articleData) {
+
+              if (!articleData || !articleData.content) {
                 logger.warn(`Failed to scrape article: ${link}`);
                 continue;
               }
