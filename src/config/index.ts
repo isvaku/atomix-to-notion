@@ -69,7 +69,8 @@ export const config = {
       nextPageLoadsInSamePage: true, // Navigate to new page
       dateFormat: "DD/MM/YYYY h:mm a",
       selectors: {
-        articleLinks: 'div.archivefit .post div.twelve.columns h2 a[href*="/"]',
+        articleLinks:
+          "div.archivefit .post div.twelve.columns h2.featured-image-narrow-title a",
         title: "h1.featured-image-narrow-title",
         author:
           "div.single-post-content div.row span.author-dark a[rel='author']",
