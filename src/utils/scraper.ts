@@ -103,7 +103,7 @@ export class WebScraper {
       while (currentPage <= maxPages) {
         // Wait for content to load
         try {
-          await page.waitForSelector(linkSelector, { timeout: 5000 });
+          await page.waitForSelector(linkSelector, { timeout: 10000 });
         } catch (error) {
           logger.warn(
             `Selector ${linkSelector} not found on page ${currentPage}`,
