@@ -29,7 +29,7 @@ export const config = {
     uri: process.env.MONGODB_URI || "localhost:27017/gaming-news-crawler",
     options: {
       maxPoolSize: 10,
-      serverSelectionTimeoutMS: 5000,
+      serverSelectionTimeoutMS: 50000,
       socketTimeoutMS: 45000,
       bufferCommands: false,
     },
