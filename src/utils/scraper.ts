@@ -38,6 +38,7 @@ export class WebScraper {
     if (!this.browser) {
       this.browser = await puppeteer.launch({
         headless: true,
+        protocolTimeout: 60000, // Increase protocol timeout to 60 seconds
         browser: "firefox",
         args: [
           "--no-sandbox",
@@ -103,7 +104,7 @@ export class WebScraper {
       while (currentPage <= maxPages) {
         // Wait for content to load
         try {
-          await page.waitForSelector(linkSelector, { timeout: 10000 });
+          await page.waitForSelector(linkSelector, { timeout: 20000 });
         } catch (error) {
           logger.warn(
             `Selector ${linkSelector} not found on page ${currentPage}`,
