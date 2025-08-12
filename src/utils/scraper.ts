@@ -59,15 +59,17 @@ export class WebScraper {
   ): Promise<Page> {
     try {
       logger.debug(`Fetching URL: ${url} (attempt ${attempt})`);
-
       await this.initBrowser();
-      const page = await this.browser!.newPage();
 
+      // Reuse a single page for all requests to reduce resource usage
+      const page =
+        (this.browser!.pages && (await this.browser!.pages())[0]) ||
+        (await this.browser!.newPage());
       await page.setUserAgent(this.userAgent);
       await page.setViewport({ width: 1366, height: 768 });
-
+      await page.goto("about:blank"); // Reset page state
       await page.goto(url, {
-        waitUntil: "networkidle2",
+        waitUntil: "domcontentloaded", // Faster than networkidle2
         timeout: this.timeout,
       });
 
@@ -146,18 +148,26 @@ export class WebScraper {
             try {
               if (nextPageLoadsInSamePage) {
                 // Click and wait for content to reload in the same page
-                await page.evaluate((selector) => {
-                  const el = document.querySelector(selector);
-                  if (el) (el as HTMLElement).click();
-                }, nextPageSelector);
+                await Promise.all([
+                  page.waitForFunction(
+                    (selector) => !!document.querySelector(selector),
+                    {},
+                    linkSelector
+                  ),
+                  page.evaluate((selector) => {
+                    const el = document.querySelector(selector);
+                    if (el) (el as HTMLElement).click();
+                  }, nextPageSelector),
+                ]);
                 await this.delay(4000); // Wait for content to load
                 await page.waitForSelector(linkSelector, { timeout: 5000 });
               } else {
                 // Click and wait for navigation to new page
                 await Promise.all([
-                  page.waitForNavigation({ waitUntil: "networkidle2" }),
+                  page.waitForNavigation({ waitUntil: "domcontentloaded" }),
                   page.click(nextPageSelector),
                 ]);
+                await page.waitForSelector(linkSelector, { timeout: 10000 }); // Re-select after navigation
               }
 
               currentPage++;
