@@ -1,4 +1,6 @@
 import puppeteer, { Browser, Page } from "puppeteer";
+import axios from "axios";
+import * as cheerio from "cheerio";
 import { config, Source } from "../config";
 import { logger } from "./logger";
 import dayjs from "dayjs";
@@ -210,40 +212,32 @@ export class WebScraper {
     url: string,
     source: Source
   ): Promise<ScrapedArticle | null> {
-    let page: Page | null = null;
-
     try {
-      page = await this.fetchWithRetry(url);
+      logger.debug(`Scraping article: ${url}`);
 
-      if (!page) {
-        logger.error(`Failed to open page for URL: ${url}`);
-        return null;
-      }
+      // Fetch HTML with axios - much more lightweight than Puppeteer
+      const response = await axios.get(url, {
+        headers: {
+          'User-Agent': this.userAgent,
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+          'Accept-Language': 'en-US,en;q=0.5',
+          'Accept-Encoding': 'gzip, deflate',
+          'Connection': 'keep-alive',
+        },
+        timeout: this.timeout,
+        maxRedirects: 5,
+      });
 
-      // Wait for main content to load
-      if (source.selectors.content) {
-        const contentSelectors = source.selectors.content.split(", ");
-        try {
-          await page.waitForSelector(contentSelectors[0], { timeout: 5000 });
-        } catch (error) {
-          logger.warn(`Content selector not found for ${url}:`, error);
-        }
-      }
+      const html = response.data;
+      const $ = cheerio.load(html);
 
-      // Extract article data using page.evaluate with plain JavaScript
-      // Use Puppeteer's page.$eval and page.$$eval instead of page.evaluate
       // Helper to get text from selectors
-      async function getTextFromSelectors(
-        selectorString: string
-      ): Promise<string> {
+      function getTextFromSelectors(selectorString: string): string {
         if (!selectorString) return "";
         const selectorList = selectorString.split(", ");
         for (const selector of selectorList) {
           try {
-            const text = await page?.$eval(
-              selector,
-              (el) => el.textContent?.trim() || ""
-            );
+            const text = $(selector).first().text().trim();
             if (text) return text;
           } catch {
             /* ignore */
@@ -252,20 +246,19 @@ export class WebScraper {
         return "";
       }
 
-      // Helper to get content from selectors (multiple elements)
-      async function getContentFromSelectors(
-        selectorString: string
-      ): Promise<string> {
+      // Helper to get content from selectors (multiple elements with HTML)
+      function getContentFromSelectors(selectorString: string): string {
         if (!selectorString) return "";
         const selectorList = selectorString.split(", ");
         for (const selector of selectorList) {
           try {
-            const contents =
-              (await page?.$$eval(selector, (elements) =>
-                elements
-                  .map((el) => el.outerHTML.trim())
-                  .filter((html) => html.length > 0)
-              )) ?? [];
+            const contents: string[] = [];
+            $(selector).each((_, element) => {
+              const html = $(element).html()?.trim();
+              if (html && html.length > 0) {
+                contents.push(html);
+              }
+            });
             if (contents.length > 0) return contents.join("\n\n");
           } catch {
             /* ignore */
@@ -280,10 +273,7 @@ export class WebScraper {
         const selectorList = source.selectors.entryId.split(", ");
         for (const selector of selectorList) {
           try {
-            const className = await page.$eval(
-              selector,
-              (el) => el.getAttribute("class") || ""
-            );
+            const className = $(selector).first().attr("class") || "";
             const classArray = className.split(" ");
             for (const classItem of classArray) {
               if (classItem.startsWith("post-")) {
@@ -309,7 +299,8 @@ export class WebScraper {
         }
       }
 
-      let dateText = await getTextFromSelectors(source.selectors.date);
+      // Parse date
+      let dateText = getTextFromSelectors(source.selectors.date);
       let parsedDate: Date;
       if (source.dateFormat && dateText) {
         if (source.name === "Atomix") {
@@ -325,23 +316,19 @@ export class WebScraper {
 
       const articleData: ScrapedArticle = {
         entryId,
-        title: await getTextFromSelectors(source.selectors.title),
-        author: await getTextFromSelectors(source.selectors.author),
-        content: await getContentFromSelectors(source.selectors.content),
-        summary: await getTextFromSelectors(source.selectors.summary ?? ""),
+        title: getTextFromSelectors(source.selectors.title),
+        author: getTextFromSelectors(source.selectors.author),
+        content: getContentFromSelectors(source.selectors.content),
+        summary: getTextFromSelectors(source.selectors.summary ?? ""),
         link: url,
         date: parsedDate,
       };
 
-      logger.info(`Scraped article data from ${url}`);
+      logger.info(`Successfully scraped article: ${url}`);
       return articleData;
     } catch (error) {
       logger.error(`Failed to scrape article ${url}:`, error);
       return null;
-    } finally {
-      if (page) {
-        await page.close();
-      }
     }
   }
 
