@@ -3,6 +3,7 @@ import { config } from "../config";
 import { EntryModel } from "../models";
 import { workerConnection } from "../queue/connection";
 import { QUEUE_NAMES, SCHEDULERS, enqueueLinks, enqueueNotionSync } from "../queue/queues";
+import { alertDiscoverFailed, pingWatchdog } from "../services/alerts";
 import { sendDailyReport } from "../services/report";
 import { WebScraper } from "../utils/scraper";
 import { logger } from "../utils/logger";
@@ -31,6 +32,8 @@ export async function discover(
   }
 
   logger.info(`Discover: ${found} links found, ${queued} new queued`);
+  // Tells the external watchdog the crawler is alive and reaching the site
+  await pingWatchdog();
   return { found, queued };
 }
 
@@ -83,6 +86,9 @@ export function createMaintenanceWorker(scraper: WebScraper): Worker {
 
   worker.on("failed", (job, error) => {
     logger.error(`Maintenance job ${job?.name ?? "unknown"} failed: ${error.message}`);
+    if (job?.name === SCHEDULERS.discover) {
+      void alertDiscoverFailed(error);
+    }
   });
 
   return worker;

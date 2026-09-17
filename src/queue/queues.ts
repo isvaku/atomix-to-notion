@@ -111,6 +111,7 @@ export async function enqueueLinks(
 ): Promise<EnqueueResult> {
   const result: EnqueueResult = { queued: [], skipped: [], rejected: [] };
   const seen = new Set<string>();
+  const candidates: { link: string; source: Source }[] = [];
 
   for (const value of links) {
     const check = checkLink(value, sources);
@@ -118,15 +119,24 @@ export async function enqueueLinks(
       result.rejected.push({ link: check.link, reason: check.reason });
       continue;
     }
-
-    const { link, source } = check;
-    if (seen.has(link)) {
-      result.skipped.push({ link, reason: "already-queued" });
+    if (seen.has(check.link)) {
+      result.skipped.push({ link: check.link, reason: "already-queued" });
       continue;
     }
-    seen.add(link);
+    seen.add(check.link);
+    candidates.push({ link: check.link, source: check.source });
+  }
 
-    if (await EntryModel.exists({ link })) {
+  if (candidates.length === 0) return result;
+
+  // One database round-trip for the whole batch, not one per link
+  const known = await EntryModel.find({ link: { $in: candidates.map((item) => item.link) } })
+    .select({ link: 1 })
+    .lean();
+  const existing = new Set(known.map((entry) => entry.link));
+
+  for (const { link, source } of candidates) {
+    if (existing.has(link)) {
       result.skipped.push({ link, reason: "exists" });
       continue;
     }

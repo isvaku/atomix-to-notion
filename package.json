@@ -1,6 +1,6 @@
 {
 	"name": "atomix-to-notion",
-	"version": "1.2.0",
+	"version": "1.3.0",
 	"description": "Atomix news crawler that queues articles and syncs them to Notion",
 	"main": "dist/index.js",
 	"scripts": {
@@ -31,6 +31,7 @@
 	"author": "",
 	"license": "MIT",
 	"dependencies": {
+		"@fastify/rate-limit": "^10.3.0",
 		"@notionhq/client": "^4.0.1",
 		"bullmq": "^6.3.6",
 		"cheerio": "^1.1.2",

@@ -12,7 +12,7 @@ let app: FastifyInstance;
 
 beforeAll(async () => {
   await database.connect();
-  app = buildServer({ workersRunning: () => true, apiKey: API_KEY });
+  app = await buildServer({ workersRunning: () => true, apiKey: API_KEY });
   await app.ready();
 });
 
@@ -42,6 +42,27 @@ describe("auth", () => {
       headers: { authorization: "Bearer nope" },
     });
     expect(response.statusCode).toBe(401);
+  });
+
+  it("rate limits repeated API calls, so the key can't be brute forced", async () => {
+    // Its own server: the limiter counts per instance, and this test exhausts the budget
+    const limited = await buildServer({ workersRunning: () => true, apiKey: API_KEY });
+    await limited.ready();
+
+    const codes: number[] = [];
+    for (let attempt = 0; attempt < 150; attempt++) {
+      const response = await limited.inject({
+        method: "GET",
+        url: "/api/status",
+        headers: { authorization: "Bearer wrong" },
+      });
+      codes.push(response.statusCode);
+    }
+
+    // The first 120 in the window are answered (as 401), the rest are refused
+    expect(codes.filter((code) => code === 401)).toHaveLength(120);
+    expect(codes.filter((code) => code === 429)).toHaveLength(30);
+    await limited.close();
   });
 
   it("leaves /health open, for the Docker health check", async () => {

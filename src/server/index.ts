@@ -1,4 +1,5 @@
 import Fastify, { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
+import rateLimit from "@fastify/rate-limit";
 import { createHash, timingSafeEqual } from "crypto";
 import { readFileSync } from "fs";
 import path from "path";
@@ -29,7 +30,10 @@ function isAuthorized(request: FastifyRequest, apiKey: string): boolean {
   return token.length > 0 && timingSafeEqual(digest(token), digest(apiKey));
 }
 
-export function buildServer(deps: ServerDeps): FastifyInstance {
+/** Requests per minute per IP against /api/*, which also caps key guessing. */
+const RATE_LIMIT_PER_MINUTE = 120;
+
+export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   const apiKey = deps.apiKey ?? config.server.apiKey;
   const app = Fastify({ logger: false, bodyLimit: 256 * 1024 });
 
@@ -37,7 +41,15 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
     logger.warn("API_KEY is not set: the API is open to anyone who can reach it");
   }
 
-  app.addHook("onRequest", async (request: FastifyRequest, reply: FastifyReply) => {
+  await app.register(rateLimit, {
+    max: RATE_LIMIT_PER_MINUTE,
+    timeWindow: "1 minute",
+    // The dashboard polls /health and the page itself; only the API is limited
+    allowList: (request) => !request.url.startsWith("/api/"),
+  });
+
+  // preHandler, not onRequest: the rate limiter runs first, so failed keys are counted
+  app.addHook("preHandler", async (request: FastifyRequest, reply: FastifyReply) => {
     if (apiKey && request.url.startsWith("/api/") && !isAuthorized(request, apiKey)) {
       return reply.code(401).send({ error: "Unauthorized" });
     }

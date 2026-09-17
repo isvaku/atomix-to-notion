@@ -33,6 +33,87 @@ export function parseArticleDate(dateText: string, format: string): Date | null 
   return parsed.isValid() ? parsed.toDate() : null;
 }
 
+
+/**
+ * Reads the values of a selector list, in order, and returns the first hit.
+ * A <meta> match yields its content attribute rather than its (empty) text.
+ */
+function readSelectors($: cheerio.CheerioAPI, selectorString: string | undefined): string {
+  for (const selector of (selectorString ?? "").split(", ").filter(Boolean)) {
+    try {
+      const element = $(selector).first();
+      if (element.length === 0) continue;
+
+      const value = element.is("meta") ? (element.attr("content") ?? "") : element.text();
+      if (value.trim()) return value.trim();
+    } catch {
+      /* a bad selector shouldn't stop the others */
+    }
+  }
+  return "";
+}
+
+/** Concatenates the inner HTML of every element matching the first selector that hits. */
+function readHtml($: cheerio.CheerioAPI, selectorString: string | undefined): string {
+  for (const selector of (selectorString ?? "").split(", ").filter(Boolean)) {
+    try {
+      const contents: string[] = [];
+      $(selector).each((_, element) => {
+        const html = $(element).html()?.trim();
+        if (html) contents.push(html);
+      });
+      if (contents.length > 0) return contents.join("\n\n");
+    } catch {
+      /* ignore */
+    }
+  }
+  return "";
+}
+
+/** Derives the entry id from the post's CSS classes, falling back to the URL slug. */
+function readEntryId($: cheerio.CheerioAPI, url: string, source: Source): string {
+  for (const selector of (source.selectors.entryId ?? "").split(", ").filter(Boolean)) {
+    try {
+      const classes = ($(selector).first().attr("class") ?? "").split(" ");
+      for (const className of classes) {
+        if (!className.startsWith("post-")) continue;
+        const id = className.split("-")[1];
+        if (!id) continue;
+        return source.name === "Atomix" ? `${source.url}/?p=${id}` : id;
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+
+  const slug = url.split("/").pop() ?? "";
+  return slug.replace(/[^a-zA-Z0-9]/g, "");
+}
+
+/** Turns an article page into an entry. Pure, so it can be tested against saved HTML. */
+export function parseArticle(html: string, url: string, source: Source): ScrapedArticle {
+  const $ = cheerio.load(html);
+
+  const dateText = readSelectors($, source.selectors.date);
+  let date: Date | null = source.dateFormat
+    ? parseArticleDate(dateText, source.dateFormat)
+    : new Date(dateText);
+  if (!date || Number.isNaN(date.getTime())) {
+    logger.warn(`Could not parse date "${dateText}" for ${url}, using the current time`);
+    date = new Date();
+  }
+
+  return {
+    entryId: readEntryId($, url, source),
+    title: readSelectors($, source.selectors.title),
+    author: readSelectors($, source.selectors.author),
+    content: readHtml($, source.selectors.content),
+    summary: readSelectors($, source.selectors.summary),
+    link: url,
+    date,
+  };
+}
+
 export class WebScraper {
   private timeout: number;
   private retries: number;
@@ -376,100 +457,10 @@ export class WebScraper {
   private async scrape(url: string, source: Source): Promise<ScrapedArticle | null> {
     try {
       logger.debug(`Scraping article: ${url}`);
-
       const html = await this.browserFetch(url);
-      const $ = cheerio.load(html);
-
-      // Helper to get text from selectors
-      function getTextFromSelectors(selectorString: string): string {
-        if (!selectorString) return "";
-        const selectorList = selectorString.split(", ");
-        for (const selector of selectorList) {
-          try {
-            const text = $(selector).first().text().trim();
-            if (text) return text;
-          } catch {
-            /* ignore */
-          }
-        }
-        return "";
-      }
-
-      // Helper to get content from selectors (multiple elements with HTML)
-      function getContentFromSelectors(selectorString: string): string {
-        if (!selectorString) return "";
-        const selectorList = selectorString.split(", ");
-        for (const selector of selectorList) {
-          try {
-            const contents: string[] = [];
-            $(selector).each((_, element) => {
-              const html = $(element).html()?.trim();
-              if (html && html.length > 0) {
-                contents.push(html);
-              }
-            });
-            if (contents.length > 0) return contents.join("\n\n");
-          } catch {
-            /* ignore */
-          }
-        }
-        return "";
-      }
-
-      // Get entryId
-      let entryId = "";
-      if (source.selectors.entryId) {
-        const selectorList = source.selectors.entryId.split(", ");
-        for (const selector of selectorList) {
-          try {
-            const className = $(selector).first().attr("class") || "";
-            const classArray = className.split(" ");
-            for (const classItem of classArray) {
-              if (classItem.startsWith("post-")) {
-                if (source.name === "Atomix") {
-                  entryId = `${source.url}/?p=${classItem.split("-")[1] || ""}`;
-                } else {
-                  entryId = classItem.split("-")[1] || "";
-                }
-                if (entryId) break;
-              }
-            }
-            if (entryId) break;
-          } catch {
-            /* ignore */
-          }
-        }
-      }
-      if (!entryId) {
-        const urlParts = url.split("/");
-        const lastPart = urlParts[urlParts.length - 1];
-        if (lastPart) {
-          entryId = lastPart.replace(/[^a-zA-Z0-9]/g, "");
-        }
-      }
-
-      // Parse date
-      const dateText = getTextFromSelectors(source.selectors.date);
-      let parsedDate: Date | null = source.dateFormat
-        ? parseArticleDate(dateText, source.dateFormat)
-        : new Date(dateText);
-      if (!parsedDate || Number.isNaN(parsedDate.getTime())) {
-        logger.warn(`Could not parse date "${dateText}" for ${url}, using the current time`);
-        parsedDate = new Date();
-      }
-
-      const articleData: ScrapedArticle = {
-        entryId,
-        title: getTextFromSelectors(source.selectors.title),
-        author: getTextFromSelectors(source.selectors.author),
-        content: getContentFromSelectors(source.selectors.content),
-        summary: getTextFromSelectors(source.selectors.summary ?? ""),
-        link: url,
-        date: parsedDate,
-      };
-
-      logger.info(`Successfully scraped article: ${url}`);
-      return articleData;
+      const article = parseArticle(html, url, source);
+      logger.debug(`Successfully scraped article: ${url}`);
+      return article;
     } catch (error) {
       logger.error(`Failed to scrape article ${url}:`, error);
       return null;

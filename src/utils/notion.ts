@@ -5,13 +5,17 @@ import type {
   BlockObjectRequest,
   CreatePageParameters,
 } from "@notionhq/client/build/src/api-endpoints";
-import { MAX_BODY_LENGTH, MAX_RICH_TEXT_LENGTH } from "./constants";
+import { MAX_RICH_TEXT_LENGTH } from "./constants";
 import { config } from "../config";
 import { logger } from "./logger";
 import { IEntry } from "../models";
 
 // Notion rejects rich text arrays longer than this in a single block
 const MAX_RICH_TEXT_ITEMS = 100;
+// Blocks per create/append request
+const BLOCKS_PER_REQUEST = 100;
+// Upper bound on one page, so a runaway page can't spawn endless requests
+const MAX_TOTAL_BLOCKS = 500;
 // Notion rejects URLs longer than this
 const MAX_URL_LENGTH = 2000;
 
@@ -104,7 +108,8 @@ function toParagraphBlocks(items: RichText[]): BlockObjectRequest[] {
 
 /**
  * Converts article HTML into Notion blocks: paragraphs (with links, bold,
- * italic and underline) and images. Text outside <p> elements is ignored.
+ * italic and underline), headings, list items, quotes, images and embeds.
+ * Loose text outside a block element is ignored.
  */
 export function htmlToBlocks(html: string, baseUrl: string): BlockObjectRequest[] {
   const blocks: BlockObjectRequest[] = [];
@@ -139,6 +144,69 @@ export function htmlToBlocks(html: string, baseUrl: string): BlockObjectRequest[
         const url = resolveHttpUrl(node.getAttribute("href"), baseUrl);
         richText.push(text(linkText, url ? { text: { content: linkText, link: { url } } } : {}));
         richText.push(text(" "));
+        break;
+      }
+      case "H1":
+      case "H2":
+      case "H3":
+      case "H4":
+      case "H5":
+      case "H6": {
+        const heading: RichText[] = [];
+        processChildren(node, heading);
+        if (heading.length > 0) {
+          // Notion only has three heading levels
+          const type = node.tagName === "H1" || node.tagName === "H2" ? "heading_2" : "heading_3";
+          blocks.push({
+            object: "block",
+            type,
+            [type]: { rich_text: splitLongItems(heading).slice(0, MAX_RICH_TEXT_ITEMS) },
+          } as BlockObjectRequest);
+        }
+        break;
+      }
+      case "LI": {
+        const item: RichText[] = [];
+        processChildren(node, item);
+        if (item.length > 0) {
+          const type = node.parentNode?.rawTagName?.toUpperCase() === "OL"
+            ? "numbered_list_item"
+            : "bulleted_list_item";
+          blocks.push({
+            object: "block",
+            type,
+            [type]: { rich_text: splitLongItems(item).slice(0, MAX_RICH_TEXT_ITEMS) },
+          } as BlockObjectRequest);
+        }
+        break;
+      }
+      case "BLOCKQUOTE": {
+        const quote: RichText[] = [];
+        processChildren(node, quote);
+        if (quote.length > 0) {
+          blocks.push({
+            object: "block",
+            type: "quote",
+            quote: { rich_text: splitLongItems(quote).slice(0, MAX_RICH_TEXT_ITEMS) },
+          });
+        }
+        break;
+      }
+      case "IFRAME": {
+        const src = resolveHttpUrl(node.getAttribute("src"), baseUrl);
+        if (src) {
+          // YouTube embeds have to be watch URLs for Notion to accept them as video
+          const youtube = src.match(/youtube\.com\/embed\/([\w-]+)/);
+          blocks.push(
+            youtube
+              ? {
+                  object: "block",
+                  type: "video",
+                  video: { type: "external", external: { url: `https://www.youtube.com/watch?v=${youtube[1]}` } },
+                }
+              : { object: "block", type: "embed", embed: { url: src } }
+          );
+        }
         break;
       }
       case "IMG": {
@@ -184,7 +252,16 @@ export function htmlToBlocks(html: string, baseUrl: string): BlockObjectRequest[
     }
   });
 
-  return blocks.slice(0, MAX_BODY_LENGTH);
+  return blocks.slice(0, MAX_TOTAL_BLOCKS);
+}
+
+/** Notion takes at most 100 blocks per request, so long articles go in batches. */
+export function chunkBlocks(blocks: BlockObjectRequest[]): BlockObjectRequest[][] {
+  const chunks: BlockObjectRequest[][] = [];
+  for (let start = 0; start < blocks.length; start += BLOCKS_PER_REQUEST) {
+    chunks.push(blocks.slice(start, start + BLOCKS_PER_REQUEST));
+  }
+  return chunks;
 }
 
 export interface NotionClientOptions {
@@ -240,6 +317,13 @@ export class NotionClient {
     return results[0]?.id ?? null;
   }
 
+  private async appendChunks(pageId: string, chunks: BlockObjectRequest[][]): Promise<void> {
+    for (const chunk of chunks) {
+      if (chunk.length === 0) continue;
+      await this.notion.blocks.children.append({ block_id: pageId, children: chunk });
+    }
+  }
+
   private async hasContent(pageId: string): Promise<boolean> {
     const { results } = await this.notion.blocks.children.list({
       block_id: pageId,
@@ -263,12 +347,15 @@ export class NotionClient {
     const children = entry.content ? htmlToBlocks(entry.content, entry.link) : [];
     const existingPageId = await this.findPageByLink(entry.link);
 
+    const [firstChunk = [], ...restChunks] = chunkBlocks(children);
+
     if (!existingPageId) {
-      await this.notion.pages.create({
+      const page = await this.notion.pages.create({
         parent: { type: "database_id", database_id: this.databaseId },
         properties,
-        children,
+        children: firstChunk,
       });
+      await this.appendChunks(page.id, restChunks);
       logger.info(`Created Notion page for entry: ${entry.entryId}`);
       return "created";
     }
@@ -276,10 +363,7 @@ export class NotionClient {
     await this.notion.pages.update({ page_id: existingPageId, properties });
 
     if (children.length > 0 && !(await this.hasContent(existingPageId))) {
-      await this.notion.blocks.children.append({
-        block_id: existingPageId,
-        children,
-      });
+      await this.appendChunks(existingPageId, [firstChunk, ...restChunks]);
     }
 
     logger.info(`Updated existing Notion page for entry: ${entry.entryId}`);

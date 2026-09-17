@@ -110,6 +110,16 @@ export const config = {
     rateLimitPerSecond: 3,
   },
 
+  // Alerting
+  alerts: {
+    // Pinged after every successful discover. An external watchdog
+    // (e.g. healthchecks.io) alerts when the pings stop, which is the one
+    // failure this app cannot report itself: being down.
+    pingUrl: process.env.HEALTHCHECK_PING_URL || "",
+    // Telegram message when discovery fails, at most once per this many minutes
+    discoverFailureCooldownMinutes: int(process.env.DISCOVER_ALERT_COOLDOWN_MINUTES, 360),
+  },
+
   // Daily report of failures, sent to Telegram
   report: {
     interval: process.env.REPORT_INTERVAL || "0 9 * * *",
@@ -141,6 +151,8 @@ export const config = {
           "div.single-post-content div.row span.author-dark a[rel='author']",
         content: "div.single-post-content div.row div.post-text",
         date: "div.single-post-content div.row span.date-dark",
+        // The intro paragraph, which the page exposes as a meta tag
+        summary: "meta[property='og:description'], meta[name='description']",
         entryId: "div.post",
       },
     },

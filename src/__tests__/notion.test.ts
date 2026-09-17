@@ -1,4 +1,4 @@
-import { htmlToBlocks, resolveHttpUrl } from "../utils/notion";
+import { chunkBlocks, htmlToBlocks, resolveHttpUrl } from "../utils/notion";
 
 const BASE = "https://atomix.vg/an-article";
 
@@ -67,8 +67,68 @@ describe("htmlToBlocks", () => {
     expect(images[0].image.external.url).toBe("https://atomix.vg/a.png");
   });
 
-  it("never exceeds Notion's block limit", () => {
-    const html = "<p>x</p>".repeat(250);
-    expect(htmlToBlocks(html, BASE).length).toBeLessThanOrEqual(100);
+  it("keeps long articles whole, instead of cutting them at 100 blocks", () => {
+    const blocks = htmlToBlocks("<p>x</p>".repeat(250), BASE);
+    expect(blocks).toHaveLength(250);
+  });
+
+  it("turns headings into Notion headings", () => {
+    const blocks = htmlToBlocks("<h2>Big</h2><h4>Small</h4>", BASE) as unknown as {
+      type: string;
+      heading_2?: { rich_text: { text: { content: string } }[] };
+      heading_3?: { rich_text: { text: { content: string } }[] };
+    }[];
+
+    expect(blocks[0].type).toBe("heading_2");
+    expect(blocks[0].heading_2?.rich_text[0].text.content).toBe("Big");
+    expect(blocks[1].type).toBe("heading_3");
+  });
+
+  it("turns list items into bulleted and numbered items", () => {
+    const blocks = htmlToBlocks("<ul><li>one</li></ul><ol><li>two</li></ol>", BASE) as unknown as {
+      type: string;
+    }[];
+
+    expect(blocks.map((block) => block.type)).toEqual(["bulleted_list_item", "numbered_list_item"]);
+  });
+
+  it("turns a blockquote into a quote", () => {
+    const blocks = htmlToBlocks("<blockquote>cited</blockquote>", BASE) as unknown as {
+      type: string;
+      quote: { rich_text: { text: { content: string } }[] };
+    }[];
+
+    expect(blocks[0].type).toBe("quote");
+    expect(blocks[0].quote.rich_text[0].text.content).toBe("cited");
+  });
+
+  it("turns a YouTube embed into a video block Notion accepts", () => {
+    const blocks = htmlToBlocks('<iframe src="https://www.youtube.com/embed/NEziLnExMRw"></iframe>', BASE) as unknown as {
+      type: string;
+      video: { external: { url: string } };
+    }[];
+
+    expect(blocks[0].type).toBe("video");
+    expect(blocks[0].video.external.url).toBe("https://www.youtube.com/watch?v=NEziLnExMRw");
+  });
+
+  it("turns any other iframe into an embed", () => {
+    const blocks = htmlToBlocks('<iframe src="https://example.com/player"></iframe>', BASE) as unknown as {
+      type: string;
+    }[];
+
+    expect(blocks[0].type).toBe("embed");
+  });
+});
+
+describe("chunkBlocks", () => {
+  it("splits into batches Notion will accept", () => {
+    const chunks = chunkBlocks(htmlToBlocks("<p>x</p>".repeat(250), BASE));
+
+    expect(chunks.map((chunk) => chunk.length)).toEqual([100, 100, 50]);
+  });
+
+  it("returns nothing for an empty article", () => {
+    expect(chunkBlocks([])).toEqual([]);
   });
 });

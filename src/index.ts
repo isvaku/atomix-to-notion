@@ -39,7 +39,7 @@ class Application {
       this.startWorkers({ crawl: true, notion: true, maintenance: true });
       await registerSchedulers();
 
-      this.server = buildServer({ workersRunning: () => this.workersRunning() });
+      this.server = await buildServer({ workersRunning: () => this.workersRunning() });
       await this.server.listen({ host: config.server.host, port: config.server.port });
       logger.info(`Dashboard and API listening on port ${config.server.port}`);
 

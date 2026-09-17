@@ -62,7 +62,7 @@ docker inspect --format '{{ index .Config.Labels "org.opencontainers.image.revis
 
 ## API
 
-All `/api/*` calls need a bearer token: `Authorization: Bearer $API_KEY`. `/health` and the dashboard don't.
+All `/api/*` calls need a bearer token: `Authorization: Bearer $API_KEY`. `/health` and the dashboard don't. The API is limited to 120 requests per minute per IP, which also caps key guessing; over that it answers 429.
 
 ### Crawl links
 
@@ -99,7 +99,15 @@ Up to 100 links per request. Links are normalized (`www`, trailing slash, query 
 
 Create a bot with [@BotFather](https://t.me/BotFather) for the token, send it a message, then read your chat id from `https://api.telegram.org/bot<TOKEN>/getUpdates`. Put both in `.env` as `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID`.
 
+Discovery failures don't wait for the daily report: they trigger a Telegram message straight away, muted for `DISCOVER_ALERT_COOLDOWN_MINUTES` (6 hours by default) so an outage doesn't spam you.
+
 The report goes out daily at 09:00 (`REPORT_INTERVAL`), but **only when something needs attention**: a failed sync, a failed crawl, or no articles saved in 24 hours (which is how a Cloudflare or site change shows up). Set `REPORT_ALWAYS=true` to get it every day regardless. Test it with `pnpm report` or the dashboard's "Send report".
+
+## Knowing when it's down
+
+Every alarm above assumes the app is running. If the container stops, the Pi loses power or the network drops, nothing can report it — silence looks exactly like a quiet day.
+
+Set `HEALTHCHECK_PING_URL` to a check URL from [healthchecks.io](https://healthchecks.io) (free) or any similar watchdog. Each successful discovery pings it; if the pings stop, the watchdog emails or messages you. Set its period slightly above `CRAWLER_INTERVAL`.
 
 ## Development
 
@@ -137,7 +145,8 @@ See [`.env.example`](.env.example) for the full list. The ones that matter most:
 | `REDIS_URL` | `redis://localhost:6379` | Queues. Compose sets `redis://redis:6379`. |
 | `API_KEY` | – | Required in production. `openssl rand -hex 32`. |
 | `NOTION_TOKEN`, `NOTION_DATABASE_ID` | – | Without them, Notion sync stays off. |
-| `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | – | Without them, no report is sent. |
+| `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | – | Without them, no report or alert is sent. |
+| `HEALTHCHECK_PING_URL` | – | External watchdog pinged after each discovery. See [Knowing when it's down](#knowing-when-its-down). |
 | `CRAWLER_INTERVAL` | `*/15 * * * *` | How often new articles are discovered. |
 | `TZ` | `America/Mexico_City` | Schedules and displayed dates. **Wrong value = wrong article dates.** |
 | `BROWSER_TIMEOUT_MS` | `180000` | Raise it if a slow Pi times out starting Chromium. |
