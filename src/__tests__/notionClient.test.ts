@@ -30,11 +30,8 @@ describe("NotionClient.syncEntry", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
-    process.env.NOTION_TOKEN = "token";
-    process.env.NOTION_DATABASE_ID = "database";
-    notion = new NotionClient();
-    // The client reads config at construction; tests set it directly
-    Object.assign(notion as unknown as { databaseId: string }, { databaseId: "database" });
+    // Explicit credentials: the tests must not depend on a local .env
+    notion = new NotionClient({ token: "token", databaseId: "database" });
   });
 
   it("creates a page when no page has that link", async () => {

@@ -187,19 +187,24 @@ export function htmlToBlocks(html: string, baseUrl: string): BlockObjectRequest[
   return blocks.slice(0, MAX_BODY_LENGTH);
 }
 
+export interface NotionClientOptions {
+  token?: string;
+  databaseId?: string;
+}
+
 export class NotionClient {
   private notion: Client;
+  private token: string;
   private databaseId: string;
 
-  constructor() {
-    this.notion = new Client({
-      auth: config.notion.token,
-    });
-    this.databaseId = config.notion.databaseId;
+  constructor(options: NotionClientOptions = {}) {
+    this.token = options.token ?? config.notion.token;
+    this.databaseId = options.databaseId ?? config.notion.databaseId;
+    this.notion = new Client({ auth: this.token });
   }
 
   public isConfigured(): boolean {
-    return Boolean(config.notion.token && this.databaseId);
+    return Boolean(this.token && this.databaseId);
   }
 
   private buildProperties(entry: IEntry): CreatePageParameters["properties"] {
