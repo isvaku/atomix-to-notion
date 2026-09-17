@@ -1,5 +1,4 @@
 import puppeteer, { Browser, Page } from "puppeteer";
-import axios from "axios";
 import * as cheerio from "cheerio";
 import { config, Source } from "../config";
 import { logger } from "./logger";
@@ -18,15 +17,19 @@ export interface ScrapedArticle {
   date: Date;
 }
 
+// Titles Cloudflare shows while its challenge is running
+const CHALLENGE_TITLES = ["Just a moment", "Un momento"];
+
 export class WebScraper {
-  private userAgent: string;
   private timeout: number;
   private retries: number;
   private retryDelay: number;
   private browser: Browser | null = null;
+  private page: Page | null = null;
+  // Origin whose Cloudflare challenge the current page has already passed
+  private verifiedOrigin: string | null = null;
 
   constructor() {
-    this.userAgent = config.crawler.userAgent;
     this.timeout = config.crawler.timeout;
     this.retries = config.crawler.retries;
     this.retryDelay = config.crawler.retryDelay;
@@ -36,155 +39,141 @@ export class WebScraper {
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
-  private async initBrowser(): Promise<void> {
-    if (!this.browser) {
-      this.browser = await puppeteer.launch({
-        headless: true,
-        protocolTimeout: 60000, // Increase protocol timeout to 60 seconds
-        browser: "firefox",
-        args: [
-          "--no-sandbox",
-          "--disable-setuid-sandbox",
-          "--disable-dev-shm-usage",
-          "--disable-accelerated-2d-canvas",
-          "--no-first-run",
-          "--no-zygote",
-          "--disable-gpu",
-        ],
-      });
+  private async initBrowser(): Promise<Page> {
+    if (this.browser && this.page && !this.page.isClosed()) {
+      return this.page;
     }
+
+    const { browser: browserConfig } = config.crawler;
+
+    // Cloudflare blocks headless browsers, so Chromium runs headful. In Docker the
+    // window lives in a virtual display (Xvfb, see docker-entrypoint.sh).
+    this.browser = await puppeteer.launch({
+      headless: browserConfig.headless,
+      browser: "chrome",
+      executablePath: browserConfig.executablePath,
+      timeout: browserConfig.timeout,
+      protocolTimeout: browserConfig.timeout,
+      args: [
+        "--disable-blink-features=AutomationControlled",
+        "--window-size=1366,768",
+        ...(browserConfig.noSandbox
+          ? ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"]
+          : []),
+        ...(browserConfig.disableGpu
+          ? ["--disable-gpu", "--in-process-gpu", "--no-zygote"]
+          : []),
+      ],
+    });
+
+    this.page = (await this.browser.pages())[0] ?? (await this.browser.newPage());
+    this.verifiedOrigin = null;
+    return this.page;
   }
 
-  private async fetchWithRetry(
-    url: string,
-    attempt: number = 1
-  ): Promise<Page> {
+  /**
+   * Loads the site in the browser and waits until the Cloudflare challenge is
+   * solved. Afterwards requests made from inside the page carry its cookies.
+   */
+  private async passChallenge(origin: string, attempt: number = 1): Promise<Page> {
+    const page = await this.initBrowser();
+
+    if (this.verifiedOrigin === origin) {
+      return page;
+    }
+
     try {
-      logger.debug(`Fetching URL: ${url} (attempt ${attempt})`);
-      await this.initBrowser();
-
-      // Reuse a single page for all requests to reduce resource usage
-      const page =
-        (this.browser!.pages && (await this.browser!.pages())[0]) ||
-        (await this.browser!.newPage());
-      await page.setUserAgent(this.userAgent);
-      await page.setViewport({ width: 1366, height: 768 });
-      await page.goto("about:blank"); // Reset page state
-      await page.goto(url, {
-        waitUntil: "domcontentloaded", // Faster than networkidle2
-        timeout: this.timeout,
+      logger.info(`Opening ${origin} in the browser (attempt ${attempt})`);
+      await page.goto(origin, {
+        waitUntil: "domcontentloaded",
+        timeout: config.crawler.browser.timeout,
       });
+      await page.waitForFunction(
+        (titles: string[]) =>
+          document.readyState !== "loading" &&
+          !titles.some((title) => document.title.includes(title)),
+        { timeout: config.crawler.browser.timeout, polling: 1000 },
+        CHALLENGE_TITLES
+      );
 
+      this.verifiedOrigin = origin;
+      logger.info(`Passed Cloudflare check for ${origin}`);
       return page;
     } catch (error) {
-      logger.warn(`Failed to fetch ${url} on attempt ${attempt}:`, error);
+      logger.warn(`Failed to load ${origin} on attempt ${attempt}:`, error);
 
       if (attempt < this.retries) {
+        // Start over with a fresh browser in case it got stuck
+        await this.close();
         await this.delay(this.retryDelay * attempt);
-        return this.fetchWithRetry(url, attempt + 1);
+        return this.passChallenge(origin, attempt + 1);
       }
 
       throw error;
     }
   }
 
-  public async getArticleLinks(
-    sourceUrl: string,
-    listingPath: string,
-    linkSelector: string,
-    nextPageSelector?: string,
-    nextPageLoadsInSamePage: boolean = false
-  ): Promise<string[]> {
-    let page: Page | null = null;
+  /**
+   * Requests a URL with fetch() from inside the browser page, so the request
+   * goes through with the Cloudflare clearance cookies.
+   */
+  private async browserFetch(
+    url: string,
+    method: "GET" | "POST" = "GET",
+    attempt: number = 1
+  ): Promise<string> {
+    const { origin } = new URL(url);
 
     try {
-      const fullUrl = `${sourceUrl}${listingPath}`;
-      page = await this.fetchWithRetry(fullUrl);
+      logger.debug(`Fetching URL: ${url} (attempt ${attempt})`);
+      const page = await this.passChallenge(origin);
 
-      const links: string[] = [];
-      let currentPage = 1;
-      const { maxPages } = config.crawler;
-
-      while (currentPage <= maxPages) {
-        // Wait for content to load
-        try {
-          await page.waitForSelector(linkSelector, { timeout: 20000 });
-        } catch (error) {
-          logger.warn(
-            `Selector ${linkSelector} not found on page ${currentPage}`,
-            error
-          );
-          break;
-        }
-
-        // Extract links from current page
-        const pageLinks = await page.evaluate(
-          (selector: string, baseUrl: string) => {
-            const links: string[] = [];
-            const elements = document.querySelectorAll(selector);
-
-            elements.forEach((element: Element) => {
-              const href = element.getAttribute("href");
-              const isAbsolute = href?.startsWith("http");
-              if (href) {
-                const absoluteUrl = isAbsolute ? href : `${baseUrl}/${href}`;
-                links.push(absoluteUrl);
-              }
+      const response = await page.evaluate(
+        async (target: string, requestMethod: string, timeout: number) => {
+          const controller = new AbortController();
+          const timer = setTimeout(() => controller.abort(), timeout);
+          try {
+            const res = await fetch(target, {
+              method: requestMethod,
+              credentials: "include",
+              signal: controller.signal,
             });
-
-            return links;
-          },
-          linkSelector,
-          sourceUrl
-        );
-
-        links.push(...pageLinks);
-        logger.info(`Found ${pageLinks.length} links on page ${currentPage}`);
-
-        // Check for next page
-        if (nextPageSelector) {
-          await page.waitForSelector(nextPageSelector, { timeout: 5000 });
-          const nextPageExists = await page.$(nextPageSelector);
-
-          if (nextPageExists) {
-            try {
-              if (nextPageLoadsInSamePage) {
-                // Click and wait for content to reload in the same page
-                await Promise.all([
-                  page.waitForFunction(
-                    (selector) => !!document.querySelector(selector),
-                    {},
-                    linkSelector
-                  ),
-                  page.evaluate((selector) => {
-                    const el = document.querySelector(selector);
-                    if (el) (el as HTMLElement).click();
-                  }, nextPageSelector),
-                ]);
-                await this.delay(4000); // Wait for content to load
-                await page.waitForSelector(linkSelector, { timeout: 5000 });
-              } else {
-                // Click and wait for navigation to new page
-                await Promise.all([
-                  page.waitForNavigation({ waitUntil: "domcontentloaded" }),
-                  page.click(nextPageSelector),
-                ]);
-                await page.waitForSelector(linkSelector, { timeout: 10000 }); // Re-select after navigation
-              }
-
-              currentPage++;
-            } catch (error) {
-              logger.warn(`Failed to navigate to next page: ${error}`);
-              break;
-            }
-          } else {
-            logger.info("No more pages found");
-            break;
+            return { status: res.status, body: await res.text() };
+          } finally {
+            clearTimeout(timer);
           }
-        } else {
-          break;
+        },
+        url,
+        method,
+        this.timeout
+      );
+
+      if (response.status !== 200) {
+        if (response.status === 403 || response.status === 503) {
+          // Clearance expired, solve the challenge again on the next attempt
+          this.verifiedOrigin = null;
         }
+        throw new Error(`Request to ${url} failed with status ${response.status}`);
       }
+
+      return response.body;
+    } catch (error) {
+      logger.warn(`Failed to fetch ${url} on attempt ${attempt}:`, error);
+
+      if (attempt < this.retries) {
+        await this.delay(this.retryDelay * attempt);
+        return this.browserFetch(url, method, attempt + 1);
+      }
+
+      throw error;
+    }
+  }
+
+  public async getArticleLinks(source: Source): Promise<string[]> {
+    try {
+      const links = source.listingApi
+        ? await this.getLinksFromApi(source)
+        : await this.getLinksFromListingPage(source);
 
       // Remove duplicates and filter valid URLs
       const uniqueLinks = [...new Set(links)].filter(
@@ -194,18 +183,111 @@ export class WebScraper {
           !link.includes("javascript:")
       );
 
-      logger.info(
-        `Found ${uniqueLinks.length} article links from ${sourceUrl}`
-      );
+      logger.info(`Found ${uniqueLinks.length} article links from ${source.url}`);
       return uniqueLinks.slice(0, config.crawler.maxArticlesPerRun);
     } catch (error) {
-      logger.error(`Failed to get article links from ${sourceUrl}:`, error);
+      logger.error(`Failed to get article links from ${source.url}:`, error);
       return [];
-    } finally {
-      if (page) {
-        await page.close();
+    }
+  }
+
+  /**
+   * Uses the JSON endpoint behind Atomix's "siguiente" button. Each call returns
+   * the newest articles that are not in `excludeids`.
+   */
+  private async getLinksFromApi(source: Source): Promise<string[]> {
+    const { maxPages, maxArticlesPerRun } = config.crawler;
+    const pageSize = Math.min(maxArticlesPerRun, 100);
+    const seenIds: string[] = [];
+    const links: string[] = [];
+
+    for (let currentPage = 1; currentPage <= maxPages; currentPage++) {
+      const apiUrl =
+        `${source.url}${source.listingApi}?top=${pageSize}` +
+        `&excludeids=${seenIds.join(",")}`;
+      const body = await this.browserFetch(apiUrl, "POST");
+      const items: { IdNota: string; url: string; TipoNota: string }[] =
+        JSON.parse(body).items ?? [];
+
+      if (items.length === 0) {
+        logger.info("No more pages found");
+        break;
+      }
+
+      for (const item of items) {
+        seenIds.push(item.IdNota);
+        if (source.listingApiExcludeTypes?.includes(item.TipoNota)) continue;
+        links.push(new URL(item.url, source.url).href);
+      }
+
+      logger.info(`Found ${items.length} links on page ${currentPage}`);
+
+      if (links.length >= maxArticlesPerRun) break;
+    }
+
+    return links;
+  }
+
+  private async getLinksFromListingPage(source: Source): Promise<string[]> {
+    const linkSelector = source.selectors.articleLinks;
+    const page = await this.passChallenge(new URL(source.url).origin);
+    const fullUrl = `${source.url}${source.listingPath}`;
+
+    if (page.url() !== fullUrl) {
+      await page.goto(fullUrl, {
+        waitUntil: "domcontentloaded",
+        timeout: config.crawler.browser.timeout,
+      });
+    }
+
+    const links: string[] = [];
+    let currentPage = 1;
+    const { maxPages } = config.crawler;
+
+    while (currentPage <= maxPages) {
+      try {
+        await page.waitForSelector(linkSelector, { timeout: 20000 });
+      } catch (error) {
+        logger.warn(`Selector ${linkSelector} not found on page ${currentPage}`, error);
+        break;
+      }
+
+      const pageLinks = await page.evaluate(
+        (selector: string, baseUrl: string) =>
+          Array.from(document.querySelectorAll(selector))
+            .map((element) => element.getAttribute("href"))
+            .filter((href): href is string => !!href)
+            .map((href) => new URL(href, baseUrl).href),
+        linkSelector,
+        source.url
+      );
+
+      links.push(...pageLinks);
+      logger.info(`Found ${pageLinks.length} links on page ${currentPage}`);
+
+      if (!source.nextPageSelector || !(await page.$(source.nextPageSelector))) {
+        break;
+      }
+
+      try {
+        if (source.nextPageLoadsInSamePage) {
+          await page.click(source.nextPageSelector);
+          await this.delay(4000);
+          await page.waitForSelector(linkSelector, { timeout: 5000 });
+        } else {
+          await Promise.all([
+            page.waitForNavigation({ waitUntil: "domcontentloaded" }),
+            page.click(source.nextPageSelector),
+          ]);
+        }
+        currentPage++;
+      } catch (error) {
+        logger.warn(`Failed to navigate to next page: ${error}`);
+        break;
       }
     }
+
+    return links;
   }
 
   public async scrapeArticle(
@@ -215,20 +297,7 @@ export class WebScraper {
     try {
       logger.debug(`Scraping article: ${url}`);
 
-      // Fetch HTML with axios - much more lightweight than Puppeteer
-      const response = await axios.get(url, {
-        headers: {
-          'User-Agent': this.userAgent,
-          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-          'Accept-Language': 'en-US,en;q=0.5',
-          'Accept-Encoding': 'gzip, deflate',
-          'Connection': 'keep-alive',
-        },
-        timeout: this.timeout,
-        maxRedirects: 5,
-      });
-
-      const html = response.data;
+      const html = await this.browserFetch(url);
       const $ = cheerio.load(html);
 
       // Helper to get text from selectors
@@ -304,7 +373,8 @@ export class WebScraper {
       let parsedDate: Date;
       if (source.dateFormat && dateText) {
         if (source.name === "Atomix") {
-          dateText = dateText.replace(".", "").trim();
+          // "15/09/2026 4:47 p. m." -> "15/09/2026 4:47 pm" (dayjs only knows lowercase am/pm)
+          dateText = dateText.replace(/([ap])\.?\s*m\.?/i, (_, ap: string) => `${ap.toLowerCase()}m`).trim();
         }
         const dayjsDate = dayjs(dateText, source.dateFormat);
         parsedDate = dayjsDate.isValid()
@@ -334,8 +404,10 @@ export class WebScraper {
 
   public async close(): Promise<void> {
     if (this.browser) {
-      await this.browser.close();
+      await this.browser.close().catch(() => undefined);
       this.browser = null;
+      this.page = null;
+      this.verifiedOrigin = null;
     }
   }
 }

@@ -1,75 +1,45 @@
-FROM node:24-bullseye AS build
+# Works on amd64 and arm64 (Raspberry Pi 4).
+#
+# atomix.vg is behind a Cloudflare challenge that blocks headless browsers, so
+# Chromium runs headful inside a virtual display (Xvfb, see docker-entrypoint.sh).
+# Puppeteer doesn't ship Chrome for Linux ARM, so Debian's chromium package is used.
+FROM node:24-bookworm-slim AS build
 
-# Set the working directory
 WORKDIR /app
 
-# Install necessary dependencies for Puppeteer
-RUN apt-get update && apt-get install -y \
-    wget \
-    ca-certificates \
-    fonts-liberation \
-    libasound2 \
-    libatk1.0-0 \
-    libcups2 \
-    libdbus-1-3 \
-    libgdk-pixbuf2.0-0 \
-    libnspr4 \
-    libnss3 \
-    libxcomposite1 \
-    libxrandr2 \
-    xdg-utils \
-    --no-install-recommends && \
-    rm -rf /var/lib/apt/lists/*
+ENV PUPPETEER_SKIP_DOWNLOAD=true
 
-# Copy package.json and pnpm-lock.yaml
 COPY package.json pnpm-lock.yaml ./
-
-# Install pnpm globally with a specific version to match the lockfile
 RUN npm install -g pnpm@9.11.0 && pnpm install --frozen-lockfile
 
-# Copy the rest of the application code
 COPY . .
-
-# Build the application
 RUN pnpm build
 
-# Install Puppeteer browser with ARM-compatible Chromium
-
 # Production image
-FROM node:24-bullseye AS production
+FROM node:24-bookworm-slim AS production
+
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y \
-    wget \
-    ca-certificates \
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    chromium \
+    xvfb \
     fonts-liberation \
-    libasound2 \
-    libatk1.0-0 \
-    libcups2 \
-    libdbus-1-3 \
-    libgdk-pixbuf2.0-0 \
-    libnspr4 \
-    libnss3 \
-    libxcomposite1 \
-    libxrandr2 \	  
-  	libatk-bridge2.0-0 \
-  	libdrm2 \
-  	libgbm1 \
-  	libgtk-3-0 \  
-  	libu2f-udev \
-  	libxshmfence1 \
-  	libglu1-mesa \
-    xdg-utils \
-    --no-install-recommends && \
-    rm -rf /var/lib/apt/lists/*
+    ca-certificates \
+    tzdata \
+    && rm -rf /var/lib/apt/lists/*
 
-	
-COPY --from=build /app/package.json /app/pnpm-lock.yaml ./
-	
-RUN npm install -g pnpm@9.11.0 && PUPPETEER_PRODUCT=firefox pnpm install --frozen-lockfile --prod
-RUN npx puppeteer browsers install firefox
+ENV NODE_ENV=production \
+    PUPPETEER_SKIP_DOWNLOAD=true \
+    PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium \
+    CHROME_NO_SANDBOX=true \
+    CHROME_DISABLE_GPU=true \
+    DISPLAY=:99
+
+COPY package.json pnpm-lock.yaml ./
+RUN npm install -g pnpm@9.11.0 && pnpm install --frozen-lockfile --prod && pnpm store prune
 
 COPY --from=build /app/dist ./dist
+COPY --chmod=755 docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 
-# Set the default command to run the application
-CMD ["npm", "start"]
+ENTRYPOINT ["docker-entrypoint.sh"]
+CMD ["node", "dist/index.js"]

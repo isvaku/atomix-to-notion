@@ -17,6 +17,10 @@ export interface Source {
   name: string;
   url: string;
   listingPath: string;
+  // Optional JSON endpoint (relative to url) that lists articles; used instead of listingPath
+  listingApi?: string;
+  // Article types (TipoNota) from listingApi to ignore
+  listingApiExcludeTypes?: string[];
   nextPageSelector?: string; // Optional field
   nextPageLoadsInSamePage: boolean;
   dateFormat?: string; // Optional field
@@ -46,11 +50,22 @@ export const config = {
     interval: process.env.CRAWLER_INTERVAL || "0 */6 * * *", // Every 6 hours
     maxArticlesPerRun: parseInt(process.env.MAX_ARTICLES_PER_RUN || "100"),
     userAgent:
-      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36",
     timeout: 30000,
     retries: 3,
     retryDelay: 20000,
     maxPages: parseInt(process.env.MAX_PAGES || "10"),
+    browser: {
+      // Cloudflare blocks headless mode; in Docker Chromium runs headful inside Xvfb
+      headless: process.env.BROWSER_HEADLESS === "true",
+      // Puppeteer ships no Chrome for Linux ARM, so Docker uses the system Chromium
+      executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
+      noSandbox: process.env.CHROME_NO_SANDBOX === "true",
+      // Containers have no GPU; without this Chromium's GPU process crashes on arm64
+      disableGpu: process.env.CHROME_DISABLE_GPU === "true",
+      // A Raspberry Pi starts Chromium and solves the challenge much slower than a PC
+      timeout: parseInt(process.env.BROWSER_TIMEOUT_MS || "180000"),
+    },
   },
 
   // Notion Sync Configuration
@@ -65,8 +80,11 @@ export const config = {
       name: "Atomix",
       url: "https://atomix.vg",
       listingPath: "",
-      nextPageSelector: "div.pagination-center > span", // Example selector for next page
-      nextPageLoadsInSamePage: true, // Navigate to new page
+      // Same endpoint the "siguiente" button on the home page uses
+      listingApi: "/funcionalidades/search/indexitems.aspx",
+      // Video pages have a different layout and no title/content for the selectors below
+      listingApiExcludeTypes: ["Video"],
+      nextPageLoadsInSamePage: true,
       dateFormat: "DD/MM/YYYY h:mm a",
       selectors: {
         articleLinks:

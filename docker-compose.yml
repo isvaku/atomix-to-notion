@@ -2,14 +2,21 @@ version: "3.8"
 
 services:
   atomix-to-notion:
-    image: isvaku/atomix-to-notion:latest
+    image: atomix-to-notion:latest
     build:
       context: .
       dockerfile: Dockerfile
     environment:
       NODE_ENV: production
-      NOTION_API_KEY: ${NOTION_API_KEY}
+      # Values come from the .env file next to this compose file
       MONGODB_URI: ${MONGODB_URI}
       NOTION_TOKEN: ${NOTION_TOKEN}
       NOTION_DATABASE_ID: ${NOTION_DATABASE_ID}
+      NOTION_SYNC_INTERVAL: ${NOTION_SYNC_INTERVAL:-*/50 * * * *}
+      CRAWLER_INTERVAL: ${CRAWLER_INTERVAL:-*/15 * * * *}
+      TZ: America/Mexico_City
+    # Reaps the Chromium child processes left behind between crawler runs
+    init: true
+    # Chromium needs more shared memory than Docker's 64MB default
+    shm_size: "512mb"
     restart: unless-stopped

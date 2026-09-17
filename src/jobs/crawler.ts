@@ -70,13 +70,7 @@ export class CrawlerJob {
           logger.info(`Processing source: ${source.name}`);
 
           // Get article links
-          const articleLinks = await this.scraper.getArticleLinks(
-            source.url,
-            source.listingPath,
-            source.selectors.articleLinks,
-            source.nextPageSelector,
-            source.nextPageLoadsInSamePage
-          );
+          const articleLinks = await this.scraper.getArticleLinks(source);
 
           logger.info(`Found ${articleLinks.length} links for ${source.name}`);
 
@@ -84,6 +78,12 @@ export class CrawlerJob {
           for (const link of articleLinks) {
             try {
               totalProcessed++;
+
+              // Skip articles we already have before downloading them again
+              if (await EntryModel.exists({ link })) {
+                logger.debug(`Article already exists: ${link}`);
+                continue;
+              }
 
               // Scrape article content
               const articleData = await this.scraper.scrapeArticle(
@@ -138,12 +138,11 @@ export class CrawlerJob {
       logger.info(
         `Crawler run completed. Processed: ${totalProcessed}, Saved: ${totalSaved}, Duration: ${duration}ms`
       );
-
-      // Close the browser
-      await this.scraper.close();
     } catch (error) {
       logger.error("Crawler run failed:", error);
     } finally {
+      // Close the browser so Chromium doesn't sit in memory between runs
+      await this.scraper.close();
       this.isRunning = false;
     }
   }
