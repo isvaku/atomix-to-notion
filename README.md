@@ -108,6 +108,7 @@ pnpm dev          # starts everything, dashboard on http://localhost:3000
 | `pnpm notion-sync` | Syncs everything not yet in Notion, then exits. |
 | `pnpm report` | Sends the report now. |
 | `pnpm retry-failed` | Queues failed crawls and syncs again. |
+| `pnpm fix-notion-duplicates` | Cleans up duplicate pages from earlier imports: archives content-free copies, and completes hand-made pages (author, entry date, summary) while archiving their generated twins. Dry run unless `--apply`. |
 | `pnpm reimport-notion` | Finds Notion pages with no author and no entry date (a failed manual import) and fills them in, updating each page in place. Dry run unless `--apply`; see the [script](src/scripts/reimport-from-notion.ts) for options. |
 | `pnpm test` | Jest (needs MongoDB and Redis; uses separate test databases). |
 | `pnpm lint` / `pnpm build` | ESLint / TypeScript build. |
