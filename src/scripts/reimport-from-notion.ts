@@ -4,15 +4,17 @@
  * import): it reads their links, queues them for crawling and archives the
  * empty pages, so each article ends up with one good page.
  *
+ * A page counts as failed when it has neither an author nor an entry date.
+ *
  * Nothing is changed without --apply.
  *
  *   pnpm reimport-notion                       # dry run, writes the list to a file
- *   pnpm reimport-notion --apply               # queue the links and archive the old pages
+ *   pnpm reimport-notion --apply --limit 5     # try it on five pages first
  *   pnpm reimport-notion --apply --api-url http://raspberrypi:3000
  *
  * Options:
  *   --api-url <url>   where the crawler API lives (default http://localhost:3000)
- *   --min-blocks <n>  a page with fewer content blocks than this counts as empty (default 1)
+ *   --limit <n>       only handle the first n pages found
  *   --out <file>      where to write the links (default notion-reimport.txt)
  */
 import { Client, isFullPage } from "@notionhq/client";
@@ -34,7 +36,7 @@ const flag = (name: string, fallback?: string): string | undefined => {
 
 const APPLY = args.includes("--apply");
 const API_URL = (flag("api-url", "http://localhost:3000") as string).replace(/\/$/, "");
-const MIN_BLOCKS = Number(flag("min-blocks", "1"));
+const LIMIT = Number(flag("limit", "0"));
 const OUT_FILE = flag("out", "notion-reimport.txt") as string;
 // Notion allows about 3 requests per second
 const REQUEST_DELAY_MS = 350;
@@ -62,49 +64,42 @@ function getTitle(page: { properties: Record<string, unknown> }): string {
   return "";
 }
 
-/** Counts blocks that actually carry content, ignoring empty paragraphs. */
-async function countContentBlocks(pageId: string): Promise<number> {
-  const { results } = await notion.blocks.children.list({ block_id: pageId, page_size: 10 });
-
-  return results.filter((block) => {
-    const typed = block as { type?: string; paragraph?: { rich_text: unknown[] } };
-    if (typed.type === "paragraph") {
-      return (typed.paragraph?.rich_text ?? []).length > 0;
-    }
-    return Boolean(typed.type);
-  }).length;
-}
+/** A page that never got filled in has neither an author nor an entry date. */
+const EMPTY_PAGE_FILTER = {
+  and: [
+    { property: "author", rich_text: { is_empty: true as const } },
+    { property: "entryDate", date: { is_empty: true as const } },
+  ],
+};
 
 async function findEmptyPages(): Promise<EmptyPage[]> {
   const empty: EmptyPage[] = [];
   let cursor: string | undefined;
-  let scanned = 0;
 
   do {
     const response = await notion.databases.query({
       database_id: config.notion.databaseId,
+      filter: EMPTY_PAGE_FILTER,
       page_size: 100,
       start_cursor: cursor,
     });
 
     for (const page of response.results) {
       if (!isFullPage(page) || page.archived) continue;
-      scanned++;
 
       const url = getLink(page);
-      if (!url) continue;
-
-      const blocks = await countContentBlocks(page.id);
-      await delay(REQUEST_DELAY_MS);
-
-      if (blocks < MIN_BLOCKS) {
-        empty.push({ id: page.id, url, title: getTitle(page) });
-        logger.info(`Empty: ${getTitle(page) || url}`);
+      if (!url) {
+        logger.warn(`Page without a link, skipped: ${getTitle(page) || page.id}`);
+        continue;
       }
+
+      empty.push({ id: page.id, url, title: getTitle(page) });
+      if (LIMIT > 0 && empty.length >= LIMIT) return empty;
     }
 
     cursor = response.next_cursor ?? undefined;
-    logger.info(`Scanned ${scanned} pages, ${empty.length} empty so far`);
+    logger.info(`Found ${empty.length} pages to re-import so far`);
+    await delay(REQUEST_DELAY_MS);
   } while (cursor);
 
   return empty;
@@ -148,8 +143,15 @@ async function main(): Promise<void> {
     throw new Error("NOTION_TOKEN and NOTION_DATABASE_ID must be set");
   }
 
-  logger.info(`Looking for pages with fewer than ${MIN_BLOCKS} content block(s)...`);
-  const empty = await findEmptyPages();
+  logger.info("Looking for pages without an author and without an entry date...");
+  const empty = await findEmptyPages().catch(async (error) => {
+    // The usual cause is different property names in the database
+    const database = await notion.databases.retrieve({ database_id: config.notion.databaseId });
+    const names = Object.keys((database as { properties?: object }).properties ?? {});
+    logger.error(`Could not query the database. Its properties are: ${names.join(", ")}`);
+    logger.error('This script expects an "author" (text) and an "entryDate" (date) property.');
+    throw error;
+  });
 
   if (empty.length === 0) {
     logger.info("No empty pages found, nothing to do");
