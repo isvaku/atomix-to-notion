@@ -1,10 +1,11 @@
 import mongoose from "mongoose";
 import { config } from "../config";
-import { logger } from "../utils/logger.js";
+import { logger } from "../utils/logger";
 
 class Database {
   private static instance: Database;
   private isConnected: boolean = false;
+  private listenersAttached: boolean = false;
 
   public static getInstance(): Database {
     if (!Database.instance) {
@@ -15,8 +16,12 @@ class Database {
 
   public async connect(): Promise<void> {
     if (this.isConnected) {
-      logger.info("Database already connected");
+      logger.debug("Database already connected");
       return;
+    }
+
+    if (!config.database.uri) {
+      throw new Error("MONGODB_URI is not set");
     }
 
     try {
@@ -24,26 +29,24 @@ class Database {
       this.isConnected = true;
       logger.info("Successfully connected to MongoDB");
 
-      // Handle connection events
-      mongoose.connection.on("error", (error) => {
-        logger.error("MongoDB connection error:", error);
-      });
+      // Shutdown is handled by the application; only track connection state here
+      if (!this.listenersAttached) {
+        this.listenersAttached = true;
 
-      mongoose.connection.on("disconnected", () => {
-        logger.warn("MongoDB disconnected");
-        this.isConnected = false;
-      });
+        mongoose.connection.on("error", (error) => {
+          logger.error("MongoDB connection error:", error);
+        });
 
-      mongoose.connection.on("reconnected", () => {
-        logger.info("MongoDB reconnected");
-        this.isConnected = true;
-      });
+        mongoose.connection.on("disconnected", () => {
+          logger.warn("MongoDB disconnected");
+          this.isConnected = false;
+        });
 
-      // Graceful shutdown
-      process.on("SIGINT", async () => {
-        await this.disconnect();
-        process.exit(0);
-      });
+        mongoose.connection.on("reconnected", () => {
+          logger.info("MongoDB reconnected");
+          this.isConnected = true;
+        });
+      }
     } catch (error) {
       logger.error("Failed to connect to MongoDB:", error);
       throw error;

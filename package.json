@@ -1,14 +1,16 @@
 {
 	"name": "atomix-to-notion",
-	"version": "1.0.0",
-	"description": "Gaming news crawler that syncs with Notion",
+	"version": "1.1.0",
+	"description": "Atomix news crawler that queues articles and syncs them to Notion",
 	"main": "dist/index.js",
 	"scripts": {
-		"build": "tsc",
+		"build": "rimraf dist && tsc",
 		"dev": "tsx watch src/index.ts",
 		"start": "node dist/index.js",
 		"crawler": "tsx src/index.ts --crawler-once",
 		"notion-sync": "tsx src/index.ts --notion-sync-once",
+		"report": "tsx src/index.ts --report-once",
+		"retry-failed": "tsx src/index.ts --retry-failed",
 		"setup": "tsx src/scripts/setup.ts",
 		"test": "jest",
 		"lint": "eslint",
@@ -28,11 +30,12 @@
 	"license": "MIT",
 	"dependencies": {
 		"@notionhq/client": "^4.0.1",
-		"axios": "^1.11.0",
+		"bullmq": "^6.3.6",
 		"cheerio": "^1.1.2",
-		"cron": "^3.5.0",
 		"dayjs": "^1.11.13",
 		"dotenv": "^16.6.1",
+		"fastify": "^5.12.5",
+		"ioredis": "^6.0.0",
 		"mongoose": "^8.17.0",
 		"node-html-parser": "^7.0.1",
 		"puppeteer": "^24.15.0",
@@ -51,8 +54,8 @@
 		"typescript": "^5.9.2"
 	},
 	"engines": {
-		"node": ">=18.0.0",
-		"pnpm": ">=8.0.0"
+		"node": ">=22.0.0",
+		"pnpm": ">=12.0.0"
 	},
-	"packageManager": "pnpm@8.15.6"
+	"packageManager": "pnpm@12.4.2"
 }

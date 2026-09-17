@@ -1,0 +1,415 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Atomix to Notion</title>
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ctext y='14' font-size='14'%3E📰%3C/text%3E%3C/svg%3E"
+    />
+    <style>
+      :root {
+        color-scheme: light;
+        --surface-1: #fcfcfb;
+        --plane: #f9f9f7;
+        --text-primary: #0b0b0b;
+        --text-secondary: #52514e;
+        --muted: #898781;
+        --grid: #e1e0d9;
+        --baseline: #c3c2b7;
+        --border: rgba(11, 11, 11, 0.1);
+        --series-1: #2a78d6;
+        --good: #0ca30c;
+        --warning: #fab219;
+        --critical: #d03b3b;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root:where(:not([data-theme="light"])) {
+          color-scheme: dark;
+          --surface-1: #1a1a19;
+          --plane: #0d0d0d;
+          --text-primary: #ffffff;
+          --text-secondary: #c3c2b7;
+          --muted: #898781;
+          --grid: #2c2c2a;
+          --baseline: #383835;
+          --border: rgba(255, 255, 255, 0.1);
+          --series-1: #3987e5;
+        }
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        padding: 24px 16px 64px;
+        background: var(--plane);
+        color: var(--text-primary);
+        font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+      }
+      main { max-width: 1100px; margin: 0 auto; display: grid; gap: 16px; }
+      h1 { font-size: 20px; margin: 0; }
+      h2 { font-size: 15px; margin: 0 0 12px; }
+      a { color: var(--series-1); }
+      header {
+        display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between;
+      }
+      .card {
+        background: var(--surface-1);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 16px;
+      }
+      .row { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
+      .tiles { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+      .tile .label { color: var(--text-secondary); font-size: 13px; }
+      .tile .value { font-size: 30px; font-weight: 600; margin-top: 4px; }
+      .muted { color: var(--muted); }
+      .secondary { color: var(--text-secondary); }
+      table { width: 100%; border-collapse: collapse; font-size: 14px; }
+      th { text-align: left; color: var(--text-secondary); font-weight: 600; }
+      th, td { padding: 6px 8px 6px 0; border-bottom: 1px solid var(--grid); vertical-align: top; }
+      td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+      .status { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+      .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+      .good { background: var(--good); }
+      .warn { background: var(--warning); }
+      .bad { background: var(--critical); }
+      button {
+        font: inherit; color: var(--text-primary); background: var(--surface-1);
+        border: 1px solid var(--baseline); border-radius: 8px; padding: 7px 12px; cursor: pointer;
+      }
+      button:hover { border-color: var(--series-1); }
+      button[disabled] { opacity: 0.5; cursor: progress; }
+      button.primary { background: var(--series-1); border-color: var(--series-1); color: #fff; }
+      textarea, input {
+        font: inherit; width: 100%; padding: 8px; border-radius: 8px;
+        border: 1px solid var(--baseline); background: var(--plane); color: var(--text-primary);
+      }
+      .chart { display: flex; align-items: flex-end; gap: 4px; height: 160px; border-bottom: 1px solid var(--baseline); }
+      .bar-wrap { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; height: 100%; gap: 4px; }
+      .bar {
+        width: 100%; background: var(--series-1);
+        border-radius: 4px 4px 0 0; min-height: 2px;
+      }
+      .bar-wrap:hover .bar { filter: brightness(1.1); }
+      .bar-value { font-size: 11px; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+      .axis { display: flex; gap: 4px; margin-top: 6px; }
+      .axis span { flex: 1; text-align: center; font-size: 11px; color: var(--muted); }
+      .list { margin: 0; padding: 0; list-style: none; display: grid; gap: 10px; max-height: 320px; overflow: auto; }
+      .list li { font-size: 14px; }
+      .list .err { color: var(--text-secondary); font-size: 12px; word-break: break-word; }
+      .actions { display: flex; flex-wrap: wrap; gap: 8px; }
+      .note { font-size: 13px; color: var(--text-secondary); min-height: 20px; }
+      #gate { max-width: 420px; margin: 80px auto; display: grid; gap: 12px; }
+      [hidden] { display: none !important; }
+    </style>
+  </head>
+  <body>
+    <section id="gate" class="card" hidden>
+      <h1>Atomix to Notion</h1>
+      <label for="key" class="secondary">API key</label>
+      <input id="key" type="password" autocomplete="current-password" />
+      <button class="primary" id="save-key">Open dashboard</button>
+      <p class="note" id="gate-note"></p>
+    </section>
+
+    <main id="app" hidden>
+      <header>
+        <h1>Atomix to Notion</h1>
+        <div class="actions">
+          <span class="status" id="health"><span class="dot warn"></span> checking…</span>
+          <button id="refresh">Refresh</button>
+        </div>
+      </header>
+
+      <section class="tiles">
+        <div class="card tile"><div class="label">Saved (24h)</div><div class="value" id="saved24h">–</div></div>
+        <div class="card tile"><div class="label">In Notion</div><div class="value" id="synced">–</div></div>
+        <div class="card tile"><div class="label">Pending sync</div><div class="value" id="pending">–</div></div>
+        <div class="card tile"><div class="label">Failed</div><div class="value" id="failed">–</div></div>
+      </section>
+
+      <section class="card">
+        <h2>Articles saved per day <span class="muted">· last 14 days</span></h2>
+        <div class="chart" id="chart"></div>
+        <div class="axis" id="chart-axis"></div>
+      </section>
+
+      <section class="row">
+        <div class="card">
+          <h2>Schedules</h2>
+          <table>
+            <thead>
+              <tr><th>Job</th><th>Pattern</th><th>Next run</th><th>Last run</th></tr>
+            </thead>
+            <tbody id="schedulers"></tbody>
+          </table>
+        </div>
+        <div class="card">
+          <h2>Queues</h2>
+          <table>
+            <thead>
+              <tr><th>Queue</th><th class="num">Waiting</th><th class="num">Active</th><th class="num">Delayed</th><th class="num">Done</th><th class="num">Failed</th></tr>
+            </thead>
+            <tbody id="queues"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Crawl links now</h2>
+        <textarea id="links" rows="4" placeholder="https://atomix.vg/… (one per line)"></textarea>
+        <div class="actions" style="margin-top: 8px">
+          <button class="primary" id="submit-links">Queue links</button>
+          <button id="run-discover">Run discover</button>
+          <button id="retry-failed">Retry failed</button>
+          <button id="send-report">Send report</button>
+        </div>
+        <p class="note" id="action-note"></p>
+      </section>
+
+      <section class="row">
+        <div class="card">
+          <h2>Failed Notion syncs</h2>
+          <ul class="list" id="failed-notion"></ul>
+        </div>
+        <div class="card">
+          <h2>Failed crawls</h2>
+          <ul class="list" id="failed-crawl"></ul>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Latest articles</h2>
+        <table>
+          <thead><tr><th>Article</th><th>Published</th><th>Notion</th></tr></thead>
+          <tbody id="entries"></tbody>
+        </table>
+      </section>
+
+      <p class="note" id="updated"></p>
+    </main>
+
+    <script>
+      const $ = (id) => document.getElementById(id);
+      const KEY_STORAGE = "atomix-api-key";
+      let apiKey = "";
+      try { apiKey = localStorage.getItem(KEY_STORAGE) || ""; } catch { apiKey = ""; }
+
+      const fmtDate = (value) => (value ? new Date(value).toLocaleString() : "–");
+      const fmtDay = (day) => day.slice(5);
+
+      async function api(path, options = {}) {
+        const response = await fetch(path, {
+          ...options,
+          headers: {
+            ...(options.body ? { "Content-Type": "application/json" } : {}),
+            ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
+          },
+        });
+        if (response.status === 401) {
+          showGate("That key was rejected.");
+          throw new Error("unauthorized");
+        }
+        if (!response.ok) throw new Error(`${path} responded ${response.status}`);
+        return response.json();
+      }
+
+      function showGate(message = "") {
+        $("app").hidden = true;
+        $("gate").hidden = false;
+        $("gate-note").textContent = message;
+      }
+
+      function statusDot(state) {
+        const map = { synced: "good", completed: "good", ok: "good", pending: "warn", running: "warn", failed: "bad", unhealthy: "bad" };
+        return `<span class="dot ${map[state] || "warn"}"></span>`;
+      }
+
+      // Days without articles are missing from the API, so the window is filled in here
+      function lastDays(perDay, days = 14) {
+        const counts = new Map(perDay.map((day) => [day.date, day.count]));
+        const today = new Date();
+        return Array.from({ length: days }, (_, index) => {
+          const date = new Date(today);
+          date.setDate(today.getDate() - (days - 1 - index));
+          const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+          return { date: key, count: counts.get(key) ?? 0 };
+        });
+      }
+
+      function renderChart(rawPerDay) {
+        const chart = $("chart");
+        const axis = $("chart-axis");
+        chart.innerHTML = "";
+        axis.innerHTML = "";
+        const perDay = lastDays(rawPerDay);
+        const max = Math.max(...perDay.map((day) => day.count), 1);
+        for (const day of perDay) {
+          const wrap = document.createElement("div");
+          wrap.className = "bar-wrap";
+          wrap.title = `${day.date}: ${day.count} articles`;
+          // Only the tallest bar is labelled, to keep the chart readable
+          const value = day.count === max ? `<span class="bar-value">${day.count}</span>` : "";
+          wrap.innerHTML = `${value}<div class="bar" style="height:${(day.count / max) * 100}%"></div>`;
+          chart.appendChild(wrap);
+
+          const label = document.createElement("span");
+          label.textContent = fmtDay(day.date);
+          axis.appendChild(label);
+        }
+      }
+
+      function renderSchedulers(schedulers) {
+        $("schedulers").innerHTML = schedulers
+          .map((item) => {
+            const last = item.lastRun
+              ? `${statusDot(item.lastRun.status)} ${fmtDate(item.lastRun.finishedAt || item.lastRun.startedAt)}`
+              : '<span class="muted">never</span>';
+            return `<tr>
+              <td>${item.name}</td>
+              <td class="secondary">${item.pattern ?? "–"}</td>
+              <td class="secondary">${fmtDate(item.nextRun)}</td>
+              <td><span class="status">${last}</span>${item.lastRun?.error ? `<div class="err">${escapeHtml(item.lastRun.error)}</div>` : ""}</td>
+            </tr>`;
+          })
+          .join("");
+      }
+
+      function renderQueues(queues) {
+        $("queues").innerHTML = Object.entries(queues)
+          .map(
+            ([name, counts]) => `<tr>
+              <td>${name}</td>
+              <td class="num">${counts.waiting ?? 0}</td>
+              <td class="num">${counts.active ?? 0}</td>
+              <td class="num">${counts.delayed ?? 0}</td>
+              <td class="num">${counts.completed ?? 0}</td>
+              <td class="num">${counts.failed ?? 0}</td>
+            </tr>`
+          )
+          .join("");
+      }
+
+      function escapeHtml(value) {
+        return String(value ?? "").replace(/[&<>"]/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[char]);
+      }
+
+      function renderFailures(failures) {
+        $("failed-notion").innerHTML =
+          failures.notion.map((item) => `<li><a href="${escapeHtml(item.link)}" target="_blank" rel="noreferrer">${escapeHtml(item.title || item.link)}</a><div class="err">${escapeHtml(item.error || "")}</div></li>`).join("") ||
+          '<li class="muted">None 🎉</li>';
+        $("failed-crawl").innerHTML =
+          failures.crawl.map((item) => `<li><a href="${escapeHtml(item.link)}" target="_blank" rel="noreferrer">${escapeHtml(item.link)}</a><div class="err">${escapeHtml(item.error || "")}</div></li>`).join("") ||
+          '<li class="muted">None 🎉</li>';
+      }
+
+      function renderEntries(entries) {
+        $("entries").innerHTML = entries
+          .map(
+            (entry) => `<tr>
+              <td><a href="${escapeHtml(entry.link)}" target="_blank" rel="noreferrer">${escapeHtml(entry.title || entry.link)}</a></td>
+              <td class="secondary">${fmtDate(entry.entryDate)}</td>
+              <td><span class="status">${statusDot(entry.notion)} ${entry.notion}</span></td>
+            </tr>`
+          )
+          .join("");
+      }
+
+      async function refresh() {
+        const [health, status] = await Promise.all([
+          fetch("/health").then((response) => response.json()),
+          api("/api/status"),
+        ]);
+
+        $("health").innerHTML = `${statusDot(health.status)} ${health.status === "ok" ? "healthy" : "unhealthy"}`;
+        $("health").title = Object.entries(health.checks).map(([name, ok]) => `${name}: ${ok ? "ok" : "down"}`).join(", ");
+
+        $("saved24h").textContent = status.stats.saved24h;
+        $("synced").textContent = status.stats.totals.synced;
+        $("pending").textContent = status.stats.totals.pending;
+        $("failed").textContent = status.stats.totals.failed;
+
+        renderChart(status.stats.perDay);
+        renderSchedulers(status.schedulers);
+        renderQueues(status.queues);
+        renderFailures(status.failures);
+        renderEntries(status.recentEntries);
+        $("updated").textContent = `Updated ${new Date(status.generatedAt).toLocaleTimeString()}`;
+      }
+
+      async function withButton(button, note, action) {
+        button.disabled = true;
+        $("action-note").textContent = "";
+        try {
+          const result = await action();
+          $("action-note").textContent = note(result);
+          await refresh();
+        } catch (error) {
+          $("action-note").textContent = `Failed: ${error.message}`;
+        } finally {
+          button.disabled = false;
+        }
+      }
+
+      $("save-key").addEventListener("click", () => {
+        apiKey = $("key").value.trim();
+        try { localStorage.setItem(KEY_STORAGE, apiKey); } catch { /* private mode */ }
+        start();
+      });
+
+      $("refresh").addEventListener("click", () => refresh());
+
+      $("submit-links").addEventListener("click", () =>
+        withButton(
+          $("submit-links"),
+          (result) => `Queued ${result.queued.length}, skipped ${result.skipped.length}, rejected ${result.rejected.length}.`,
+          async () => {
+            const links = $("links").value.split("\n").map((line) => line.trim()).filter(Boolean);
+            if (links.length === 0) throw new Error("No links");
+            const result = await api("/api/crawl", { method: "POST", body: JSON.stringify({ links }) });
+            $("links").value = "";
+            return result;
+          }
+        )
+      );
+
+      $("run-discover").addEventListener("click", () =>
+        withButton($("run-discover"), () => "Discover queued.", () => api("/api/schedulers/discover/run", { method: "POST" }))
+      );
+
+      $("retry-failed").addEventListener("click", () =>
+        withButton(
+          $("retry-failed"),
+          (result) => `Queued again: ${result.crawls} crawls, ${result.syncs} syncs.`,
+          () => api("/api/retry-failed", { method: "POST" })
+        )
+      );
+
+      $("send-report").addEventListener("click", () =>
+        withButton(
+          $("send-report"),
+          (result) => (result.sent ? "Report sent to Telegram." : `Not sent: ${result.reason}.`),
+          () => api("/api/report", { method: "POST" })
+        )
+      );
+
+      async function start() {
+        try {
+          await refresh();
+          $("gate").hidden = true;
+          $("app").hidden = false;
+        } catch (error) {
+          if (error.message !== "unauthorized") showGate(error.message);
+        }
+      }
+
+      // Only poll while the tab is visible
+      setInterval(() => {
+        if (!document.hidden && !$("app").hidden) refresh().catch(() => {});
+      }, 30000);
+
+      start();
+    </script>
+  </body>
+</html>

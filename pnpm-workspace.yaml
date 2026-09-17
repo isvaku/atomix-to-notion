@@ -1,0 +1,10 @@
+# Dependencies allowed to run install scripts (pnpm blocks them by default)
+allowBuilds:
+  # tsx: installs the esbuild binary for the platform
+  esbuild: true
+  # bullmq: optional native msgpack speedup (prebuilt binaries)
+  msgpackr-extract: true
+  # Downloads Chrome for local runs; Docker sets PUPPETEER_SKIP_DOWNLOAD and uses Debian's chromium
+  puppeteer: true
+  # jest's module resolver
+  unrs-resolver: true

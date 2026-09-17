@@ -1,22 +1,66 @@
-version: "3.8"
-
 services:
   atomix-to-notion:
-    image: atomix-to-notion:latest
-    build:
-      context: .
-      dockerfile: Dockerfile
+    image: isvaku/atomix-to-notion:${IMAGE_TAG:-latest}
+    depends_on:
+      redis:
+        condition: service_healthy
     environment:
       NODE_ENV: production
+      TZ: America/Mexico_City
+      REDIS_URL: redis://redis:6379
       # Values come from the .env file next to this compose file
       MONGODB_URI: ${MONGODB_URI}
       NOTION_TOKEN: ${NOTION_TOKEN}
       NOTION_DATABASE_ID: ${NOTION_DATABASE_ID}
-      NOTION_SYNC_INTERVAL: ${NOTION_SYNC_INTERVAL:-*/50 * * * *}
+      API_KEY: ${API_KEY}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
       CRAWLER_INTERVAL: ${CRAWLER_INTERVAL:-*/15 * * * *}
-      TZ: America/Mexico_City
-    # Reaps the Chromium child processes left behind between crawler runs
+      NOTION_SYNC_INTERVAL: ${NOTION_SYNC_INTERVAL:-0 * * * *}
+      REPORT_INTERVAL: ${REPORT_INTERVAL:-0 9 * * *}
+    ports:
+      # Dashboard and API. Put a reverse proxy in front for access outside the LAN
+      - "${API_PORT:-3000}:3000"
+    # Nothing is written to the SD card: the filesystem is read-only and
+    # Chromium's profile, the Xvfb socket and all caches live in RAM
+    read_only: true
+    tmpfs:
+      - /tmp:size=256m,mode=1777
+    # Reaps the Chromium child processes left behind between crawls
     init: true
     # Chromium needs more shared memory than Docker's 64MB default
     shm_size: "512mb"
+    stop_grace_period: 90s
+    logging:
+      driver: local
+      options:
+        max-size: "5m"
+        max-file: "2"
     restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    # No AOF: an RDB snapshot every 15 minutes at most, so the SD card sees few
+    # writes. A hard power loss can lose recently queued jobs; the discover and
+    # sweep schedules queue them again. BullMQ requires noeviction.
+    command: >
+      redis-server
+      --appendonly no
+      --save 900 1
+      --maxmemory-policy noeviction
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+    logging:
+      driver: local
+      options:
+        max-size: "5m"
+        max-file: "2"
+    restart: unless-stopped
+
+volumes:
+  redis-data:

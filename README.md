@@ -1,227 +1,158 @@
-# Gaming News Crawler to Notion
+# Atomix to Notion
 
-A TypeScript-based gaming news crawler that scrapes articles from multiple gaming websites and syncs them to a Notion database via MongoDB.
+Crawls articles from [atomix.vg](https://atomix.vg), stores them in MongoDB and creates a page for each one in a Notion database. Built to run unattended on a Raspberry Pi 4.
 
-## Features
+- **Queue-based**: links are queued and processed one at a time, with retries and backoff (BullMQ + Redis).
+- **HTTP API**: submit links to crawl on demand, check job status, retry failures.
+- **Dashboard**: a built-in page showing schedules, queues, failures and articles per day.
+- **Daily Telegram report**: what failed in the last 24 hours, with links, and a warning when nothing was crawled at all.
+- **Gentle on the SD card**: nothing is written to disk on the Pi (see [SD card](#sd-card)).
 
-- 🕷️ **Web Scraping**: Crawls multiple gaming news websites without relying on RSS feeds
-- 📊 **MongoDB Storage**: Stores articles with full metadata in MongoDB using Mongoose
-- 📝 **Notion Integration**: Automatically creates Notion pages for new articles
-- ⏰ **Cron Jobs**: Automated scheduling for both crawling and Notion synchronization
-- 🔧 **TypeScript**: Full type safety and modern JavaScript features
-- 📦 **PNPM**: Fast and efficient package management
-- 📋 **Logging**: Comprehensive logging with Winston
-- 🛡️ **Error Handling**: Robust error handling and retry mechanisms
+## How it works
 
-## Supported Gaming News Sources
+```
+schedule "discover" (every 15 min) ─┐
+                                    ├─> queue "crawl"  (one at a time, one Chromium)
+POST /api/crawl {links:[…]} ────────┘      3 attempts, exponential backoff
+                                           │ scrape + save to MongoDB
+                                           └─> queue "notion-sync"
+                                                 5 attempts, max 3 requests/second
+                                                 ├ ok     → entry marked created
+                                                 └ failed → entry marked failed
+schedule "sweep" (hourly): re-queues entries that never reached Notion
+schedule "report" (daily 09:00) ─> Telegram summary of failures
+```
 
-- GameSpot
-- IGN
-- Polygon
+MongoDB holds the articles and their sync state. Redis only holds jobs.
 
-## Prerequisites
+### Why it needs a real browser
 
-- Node.js 18+
-- PNPM 8+
-- MongoDB instance
-- Notion integration token and database ID
+atomix.vg is behind a Cloudflare challenge. Plain HTTP requests (axios, curl) and headless browsers get the "Just a moment…" page, so Chromium runs **headful** inside a virtual display (Xvfb) in the container. Article links come from the JSON endpoint behind the site's "siguiente" button, and article pages are fetched from inside the browser session so they carry the Cloudflare cookies.
 
-## Installation
+Puppeteer doesn't ship Chrome for Linux ARM, so the image uses Debian's `chromium` package.
 
-1. Clone the repository:
+## Running it on a Raspberry Pi
+
+The image is built for arm64 and published on every push to `main`.
+
+1. Copy `docker-compose.yml` and a `.env` file (see [`.env.example`](.env.example)) to the Pi.
+2. Set at least `MONGODB_URI`, `NOTION_TOKEN`, `NOTION_DATABASE_ID` and `API_KEY`.
+3. Start it:
 
 ```bash
-git clone <repository-url>
-cd atomix-to-notion
+docker compose pull
+docker compose up -d
 ```
 
-2. Install dependencies:
+The dashboard is then at `http://<pi>:3000`, and asks for the API key. For access from outside your network, put it behind a reverse proxy with HTTPS.
+
+To pin a version instead of `latest`, set `IMAGE_TAG=1.1.0` in `.env`.
+
+## API
+
+All `/api/*` calls need a bearer token: `Authorization: Bearer $API_KEY`. `/health` and the dashboard don't.
+
+### Crawl links
 
 ```bash
-pnpm install
+curl -X POST http://localhost:3000/api/crawl \
+  -H "Authorization: Bearer $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"links":["https://atomix.vg/some-article","https://atomix.vg/another"]}'
 ```
 
-3. Copy the environment configuration:
-
-```bash
-cp .env.example .env
-```
-
-4. Configure your environment variables in `.env`:
-
-```env
-NODE_ENV=development
-MONGODB_URI=mongodb://localhost:27017/gaming-news-crawler
-DB_NAME=gaming_news
-NOTION_TOKEN=your_notion_integration_token_here
-NOTION_DATABASE_ID=your_notion_database_id_here
-```
-
-## Database Schema
-
-Articles are stored with the following structure:
-
-```typescript
-interface IEntry extends Document {
-  entryId: string; // Unique identifier
-  title?: string; // Article title
-  author?: string; // Article author
-  summary?: string; // Article summary/excerpt
-  content: string; // Full article content
-  link: string; // Original article URL
-  created?: boolean; // Whether synced to Notion
-  entryErrors?: string[]; // Any sync errors
-  entryDate: Date; // Article publication date
+```json
+{
+  "queued": [{ "link": "https://atomix.vg/some-article", "jobId": "crawl-0ea9a9…" }],
+  "skipped": [{ "link": "https://atomix.vg/another", "reason": "exists" }],
+  "rejected": []
 }
 ```
 
-## Usage
+Up to 100 links per request. Links are normalized (`www`, trailing slash, query string and hash are dropped), so the same article can't be queued twice. `skipped` means we already have it (`exists`) or it's already queued (`already-queued`); `rejected` means it isn't a URL (`invalid-url`) or isn't from a configured source (`unsupported-host`).
 
-### Development
+### Everything else
 
-Start the crawler in development mode with auto-reload:
+| Endpoint | What it does |
+|---|---|
+| `GET /health` | MongoDB, Redis and worker state. 200 or 503. No auth. |
+| `GET /api/crawl/:jobId` | State of one crawl job and of its Notion sync. |
+| `GET /api/status` | Everything the dashboard shows. |
+| `POST /api/retry-failed` | Queues failed crawls and failed Notion syncs again. |
+| `POST /api/schedulers/:name/run` | Runs `discover`, `sweep-unsynced` or `daily-report` now. |
+| `POST /api/report` | Sends the Telegram report immediately. |
 
-```bash
-pnpm dev
-```
+## Telegram report
 
-### Production
+Create a bot with [@BotFather](https://t.me/BotFather) for the token, send it a message, then read your chat id from `https://api.telegram.org/bot<TOKEN>/getUpdates`. Put both in `.env` as `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID`.
 
-Build and start the application:
-
-```bash
-pnpm build
-pnpm start
-```
-
-### Manual Operations
-
-Run the crawler once:
-
-```bash
-pnpm crawler
-```
-
-Run the Notion sync once:
-
-```bash
-pnpm notion-sync
-```
-
-Or use the CLI flags:
-
-```bash
-tsx src/index.ts --crawler-once
-tsx src/index.ts --notion-sync-once
-```
-
-## Configuration
-
-### Cron Schedules
-
-- **Crawler**: Runs every 6 hours by default (`0 */6 * * *`)
-- **Notion Sync**: Runs every 4 hours by default (`0 */4 * * *`)
-
-### Environment Variables
-
-| Variable               | Description                   | Default                                         |
-| ---------------------- | ----------------------------- | ----------------------------------------------- |
-| `MONGODB_URI`          | MongoDB connection string     | `mongodb://localhost:27017/gaming-news-crawler` |
-| `DB_NAME`              | Database name                 | `gaming_news`                                   |
-| `NOTION_TOKEN`         | Notion integration token      | -                                               |
-| `NOTION_DATABASE_ID`   | Notion database ID            | -                                               |
-| `CRAWLER_INTERVAL`     | Cron schedule for crawler     | `0 */6 * * *`                                   |
-| `NOTION_SYNC_INTERVAL` | Cron schedule for Notion sync | `0 */4 * * *`                                   |
-| `MAX_ARTICLES_PER_RUN` | Max articles per crawler run  | `50`                                            |
-| `LOG_LEVEL`            | Logging level                 | `info`                                          |
-
-## Notion Setup
-
-1. Create a new Notion integration at https://www.notion.so/my-integrations
-2. Create a new database in Notion with the following properties:
-   - **Title** (Title)
-   - **Link** (URL)
-   - **Author** (Rich Text)
-   - **Summary** (Rich Text)
-   - **Entry Date** (Date)
-3. Share the database with your integration
-4. Copy the database ID from the URL and set it in your `.env` file
-
-## Logging
-
-Logs are written to:
-
-- Console (with colors in development)
-- `./logs/combined.log` - All logs
-- `./logs/error.log` - Error logs only
-- `./logs/app.log` - Main application log
+The report goes out daily at 09:00 (`REPORT_INTERVAL`), but **only when something needs attention**: a failed sync, a failed crawl, or no articles saved in 24 hours (which is how a Cloudflare or site change shows up). Set `REPORT_ALWAYS=true` to get it every day regardless. Test it with `pnpm report` or the dashboard's "Send report".
 
 ## Development
 
-### Project Structure
+Requires Node 22+, pnpm 12+, and MongoDB and Redis running locally.
 
-```
-src/
-├── config/          # Configuration and environment setup
-├── database/        # MongoDB connection and setup
-├── jobs/           # Cron job implementations
-│   ├── crawler.ts  # Main crawler job
-│   └── notionSync.ts # Notion synchronization job
-├── models/         # Mongoose models and TypeScript interfaces
-├── utils/          # Utility functions and helpers
-│   ├── logger.ts   # Winston logger configuration
-│   ├── scraper.ts  # Web scraping utilities
-│   └── notion.ts   # Notion API client
-└── index.ts        # Main application entry point
+```bash
+pnpm install
+cp .env.example .env
+pnpm setup        # checks MongoDB, Redis, Notion and Telegram
+pnpm dev          # starts everything, dashboard on http://localhost:3000
 ```
 
-### Available Scripts
+| Command | What it does |
+|---|---|
+| `pnpm crawler` | Discovers, crawls and syncs once, then exits. |
+| `pnpm notion-sync` | Syncs everything not yet in Notion, then exits. |
+| `pnpm report` | Sends the report now. |
+| `pnpm retry-failed` | Queues failed crawls and syncs again. |
+| `pnpm test` | Jest (needs MongoDB and Redis; uses separate test databases). |
+| `pnpm lint` / `pnpm build` | ESLint / TypeScript build. |
 
-- `pnpm dev` - Start development server with auto-reload
-- `pnpm build` - Build TypeScript to JavaScript
-- `pnpm start` - Start production server
-- `pnpm test` - Run Jest tests
-- `pnpm lint` - Run ESLint
-- `pnpm clean` - Clean build directory
+Tests never touch your real data: [`jest.setup.js`](jest.setup.js) forces `MONGODB_TEST_URI` / `REDIS_TEST_URL` (defaults: localhost, `atomix-test`) before anything loads.
 
-### Adding New News Sources
+> On Windows, pnpm 12 can corrupt `node_modules` when installing on top of an existing tree. If a package goes missing, `rm -rf node_modules && pnpm install`.
 
-To add a new gaming news source, update the `config/index.ts` file:
+## Configuration
 
-```typescript
-{
-  name: 'NewSite',
-  url: 'https://example.com',
-  listingPath: '/news/',
-  selectors: {
-    articleLinks: 'a[href*="/articles/"]',
-    title: 'h1.title',
-    author: '.author',
-    content: '.content p',
-    summary: '.summary',
-    date: 'time[datetime]'
-  }
-}
-```
+See [`.env.example`](.env.example) for the full list. The ones that matter most:
 
-## Error Handling
+| Variable | Default | What it's for |
+|---|---|---|
+| `MONGODB_URI` | – | Required. Articles and their sync state. |
+| `REDIS_URL` | `redis://localhost:6379` | Queues. Compose sets `redis://redis:6379`. |
+| `API_KEY` | – | Required in production. `openssl rand -hex 32`. |
+| `NOTION_TOKEN`, `NOTION_DATABASE_ID` | – | Without them, Notion sync stays off. |
+| `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | – | Without them, no report is sent. |
+| `CRAWLER_INTERVAL` | `*/15 * * * *` | How often new articles are discovered. |
+| `TZ` | `America/Mexico_City` | Schedules and displayed dates. **Wrong value = wrong article dates.** |
+| `BROWSER_TIMEOUT_MS` | `180000` | Raise it if a slow Pi times out starting Chromium. |
+| `BROWSER_IDLE_CLOSE_MS` | `120000` | Chromium closes after this long with no work. |
 
-The crawler includes comprehensive error handling:
+The Notion database needs these properties: `title` (Title), `link` (URL), `author` (Rich text), `summary` (Rich text), `entryDate` (Date). Share it with your integration.
 
-- Automatic retries for failed requests
-- Graceful handling of malformed HTML
-- Error logging and tracking in the database
-- Automatic skipping of duplicate articles
+## SD card
 
-## Contributing
+SD cards die from writes, so on the Pi the app writes nothing to disk:
 
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Add tests if applicable
-5. Run the linter and tests
-6. Submit a pull request
+- The app container is **read-only**, with `/tmp` in RAM (Chromium's profile, the Xvfb socket, all caches).
+- Logs go to stdout only, capped by Docker at 5 MB × 2 files.
+- Redis keeps **no** append-only file, just an RDB snapshot every 15 minutes at most.
+- The Docker health check runs every 5 minutes, because Docker writes container state on each check.
+
+The trade-off: a power cut can lose up to 15 minutes of *queued* jobs. Saved articles are safe (MongoDB), the discover schedule finds the links again, and the hourly sweep re-queues anything missing from Notion. Only links submitted through the API in that window would need resubmitting.
+
+You can confirm nothing is being written with `docker diff <container>`, which should list nothing from the app.
+
+## Troubleshooting
+
+**The dashboard says unhealthy / `/health` returns 503.** One of MongoDB, Redis or the workers is down; the response says which. Check `docker compose logs`.
+
+**No articles for a day, or the report warns about it.** Usually Cloudflare or a site change. Look for "Failed to load" or "Timed out" in the logs. If Chromium is just slow on the Pi, raise `BROWSER_TIMEOUT_MS`.
+
+**Notion syncs keep failing.** The error is stored on the entry and shown in the dashboard and the report. Fix the cause (token, database sharing, property names), then "Retry failed" or `pnpm retry-failed`.
+
+**Queued jobs disappeared after a power cut.** Expected; see [SD card](#sd-card). They'll be re-queued by the next discover and sweep.
 
 ## License
 
-MIT License - see LICENSE file for details.
+MIT

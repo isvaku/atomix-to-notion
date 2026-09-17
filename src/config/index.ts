@@ -27,16 +27,44 @@ export interface Source {
   selectors: SourceSelectors;
 }
 
+const env = process.env.NODE_ENV || "development";
+
+const int = (value: string | undefined, fallback: number): number => {
+  const parsed = parseInt(value ?? "", 10);
+  return Number.isNaN(parsed) ? fallback : parsed;
+};
+
 export const config = {
   // Database Configuration
   database: {
-    uri: process.env.MONGODB_URI || "localhost:27017/gaming-news-crawler",
+    // No default in production: a missing URI must fail fast, not hit localhost
+    uri:
+      process.env.MONGODB_URI ||
+      (env === "production" ? "" : "mongodb://localhost:27017/gaming-news-crawler"),
     options: {
       maxPoolSize: 10,
       serverSelectionTimeoutMS: 50000,
       socketTimeoutMS: 45000,
       bufferCommands: false,
     },
+  },
+
+  // Redis (BullMQ queues)
+  redis: {
+    url: process.env.REDIS_URL || "redis://localhost:6379",
+    // Namespaces all BullMQ keys, so tests can use their own prefix
+    prefix: process.env.QUEUE_PREFIX || "atomix",
+  },
+
+  // Timezone for all schedules (cron patterns)
+  cronTimezone: process.env.TZ || "America/Mexico_City",
+
+  // HTTP API
+  server: {
+    host: process.env.HOST || "0.0.0.0",
+    port: int(process.env.PORT, 3000),
+    apiKey: process.env.API_KEY || "",
+    maxLinksPerRequest: 100,
   },
 
   // Notion Configuration
@@ -47,14 +75,16 @@ export const config = {
 
   // Crawler Configuration
   crawler: {
-    interval: process.env.CRAWLER_INTERVAL || "0 */6 * * *", // Every 6 hours
-    maxArticlesPerRun: parseInt(process.env.MAX_ARTICLES_PER_RUN || "100"),
-    userAgent:
-      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36",
+    // How often new article links are discovered and queued
+    interval: process.env.CRAWLER_INTERVAL || "*/15 * * * *",
+    maxArticlesPerRun: int(process.env.MAX_ARTICLES_PER_RUN, 100),
     timeout: 30000,
-    retries: 3,
-    retryDelay: 20000,
-    maxPages: parseInt(process.env.MAX_PAGES || "10"),
+    // In-request retries (e.g. an expired Cloudflare clearance); the queue retries on top
+    retries: 2,
+    retryDelay: 5000,
+    maxPages: int(process.env.MAX_PAGES, 10),
+    // Queue attempts per link before the crawl job is marked failed
+    maxAttempts: int(process.env.CRAWL_MAX_ATTEMPTS, 3),
     browser: {
       // Cloudflare blocks headless mode; in Docker Chromium runs headful inside Xvfb
       headless: process.env.BROWSER_HEADLESS === "true",
@@ -64,14 +94,31 @@ export const config = {
       // Containers have no GPU; without this Chromium's GPU process crashes on arm64
       disableGpu: process.env.CHROME_DISABLE_GPU === "true",
       // A Raspberry Pi starts Chromium and solves the challenge much slower than a PC
-      timeout: parseInt(process.env.BROWSER_TIMEOUT_MS || "180000"),
+      timeout: int(process.env.BROWSER_TIMEOUT_MS, 180000),
+      // Close Chromium when the crawl queue has been idle this long, to free memory
+      idleCloseMs: int(process.env.BROWSER_IDLE_CLOSE_MS, 120000),
     },
   },
 
   // Notion Sync Configuration
   notionSync: {
-    interval: process.env.NOTION_SYNC_INTERVAL || "0 */4 * * *", // Every 4 hours
-    batchSize: parseInt(process.env.NOTION_SYNC_BATCH_SIZE || "10"),
+    // Safety net: queues entries that aren't in Notion yet (new ones are queued right away)
+    interval: process.env.NOTION_SYNC_INTERVAL || "0 * * * *",
+    // Attempts per entry before it's marked failed
+    maxAttempts: int(process.env.NOTION_SYNC_MAX_ATTEMPTS, 5),
+    // Notion allows ~3 requests per second
+    rateLimitPerSecond: 3,
+  },
+
+  // Daily report of failures, sent to Telegram
+  report: {
+    interval: process.env.REPORT_INTERVAL || "0 9 * * *",
+    // Send even when nothing failed
+    always: process.env.REPORT_ALWAYS === "true",
+    telegram: {
+      botToken: process.env.TELEGRAM_BOT_TOKEN || "",
+      chatId: process.env.TELEGRAM_CHAT_ID || "",
+    },
   },
 
   // Gaming News Sources
@@ -129,8 +176,10 @@ export const config = {
   logging: {
     level: process.env.LOG_LEVEL || "info",
     filePath: process.env.LOG_FILE_PATH || "./logs/app.log",
+    // Docker logs go to stdout only (rotated by Docker) to spare the SD card
+    toFile: process.env.LOG_TO_FILE !== "false",
   },
 
   // Environment
-  env: process.env.NODE_ENV || "development",
+  env,
 };

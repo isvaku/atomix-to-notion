@@ -3,6 +3,7 @@
 set -e
 
 DISPLAY_NUMBER="${DISPLAY#:}"
+mkdir -p /tmp/.X11-unix
 rm -f "/tmp/.X${DISPLAY_NUMBER}-lock" "/tmp/.X11-unix/X${DISPLAY_NUMBER}"
 Xvfb "$DISPLAY" -screen 0 1366x768x24 -nolisten tcp >/dev/null 2>&1 &
 

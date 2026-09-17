@@ -1,13 +1,9 @@
-import { database } from "../src/database";
-import { EntryModel } from "../src/models";
-import { logger } from "../src/utils";
+import { database } from "../database";
+import { EntryModel } from "../models";
+
+// MONGODB_URI points to a test database, see jest.setup.js
 
 describe("Database Connection", () => {
-  beforeAll(async () => {
-    // Use test database
-    process.env.MONGODB_URI = "mongodb://localhost:27017/test-gaming-news";
-  });
-
   afterAll(async () => {
     await database.disconnect();
   });

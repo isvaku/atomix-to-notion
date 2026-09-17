@@ -41,3 +41,9 @@ coverage/
 *.zip
 *.bak
 *.tmp
+# Not needed in the image
+.git/
+.github/
+logs/
+*.md
+plans/

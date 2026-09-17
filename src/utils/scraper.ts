@@ -20,6 +20,19 @@ export interface ScrapedArticle {
 // Titles Cloudflare shows while its challenge is running
 const CHALLENGE_TITLES = ["Just a moment", "Un momento"];
 
+/**
+ * Parses an article date with the source's dayjs format. Spanish "p. m." /
+ * "a. m." suffixes are normalized first, because dayjs only knows "pm"/"am".
+ * Returns null when the text doesn't match the format.
+ */
+export function parseArticleDate(dateText: string, format: string): Date | null {
+  const normalized = dateText
+    .trim()
+    .replace(/([ap])\.?\s*m\.?/i, (_, ap: string) => ap.toLowerCase() + "m");
+  const parsed = dayjs(normalized, format, true);
+  return parsed.isValid() ? parsed.toDate() : null;
+}
+
 export class WebScraper {
   private timeout: number;
   private retries: number;
@@ -28,6 +41,9 @@ export class WebScraper {
   private page: Page | null = null;
   // Origin whose Cloudflare challenge the current page has already passed
   private verifiedOrigin: string | null = null;
+  // Serializes browser use: several queue workers share this one Chromium
+  private lock: Promise<unknown> = Promise.resolve();
+  private idleTimer: NodeJS.Timeout | null = null;
 
   constructor() {
     this.timeout = config.crawler.timeout;
@@ -39,9 +55,51 @@ export class WebScraper {
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
+  /** Runs fn with exclusive use of the browser. */
+  private exclusive<T>(fn: () => Promise<T>): Promise<T> {
+    const task = async () => {
+      this.cancelIdleClose();
+      try {
+        return await fn();
+      } finally {
+        this.scheduleIdleClose();
+      }
+    };
+    const run = this.lock.then(task, task);
+    this.lock = run.catch(() => undefined);
+    return run;
+  }
+
+  // Chromium uses a lot of memory on a Pi, so it's closed when nothing needs it
+  private cancelIdleClose(): void {
+    if (this.idleTimer) {
+      clearTimeout(this.idleTimer);
+      this.idleTimer = null;
+    }
+  }
+
+  private scheduleIdleClose(): void {
+    this.cancelIdleClose();
+    if (!this.browser) return;
+    this.idleTimer = setTimeout(() => {
+      this.idleTimer = null;
+      logger.debug("Closing idle browser");
+      void this.lock.then(() => this.closeBrowser());
+    }, config.crawler.browser.idleCloseMs);
+    this.idleTimer.unref();
+  }
+
+  public isBrowserOpen(): boolean {
+    return this.browser !== null;
+  }
+
   private async initBrowser(): Promise<Page> {
-    if (this.browser && this.page && !this.page.isClosed()) {
+    if (this.browser?.connected && this.page && !this.page.isClosed()) {
       return this.page;
+    }
+    if (this.browser) {
+      // Chromium crashed or the page died: start over
+      await this.closeBrowser();
     }
 
     const { browser: browserConfig } = config.crawler;
@@ -56,6 +114,9 @@ export class WebScraper {
       protocolTimeout: browserConfig.timeout,
       args: [
         "--disable-blink-features=AutomationControlled",
+        // Keep writes off the disk (SD card): no crash dumps, minimal disk cache
+        "--disable-breakpad",
+        "--disk-cache-size=1",
         "--window-size=1366,768",
         ...(browserConfig.noSandbox
           ? ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"]
@@ -64,6 +125,17 @@ export class WebScraper {
           ? ["--disable-gpu", "--in-process-gpu", "--no-zygote"]
           : []),
       ],
+    });
+
+    const browser = this.browser;
+    browser.on("disconnected", () => {
+      // closeBrowser() clears this.browser first, so a match means Chromium died
+      if (this.browser === browser) {
+        logger.warn("Chromium disconnected unexpectedly");
+        this.browser = null;
+        this.page = null;
+        this.verifiedOrigin = null;
+      }
     });
 
     this.page = (await this.browser.pages())[0] ?? (await this.browser.newPage());
@@ -104,7 +176,7 @@ export class WebScraper {
 
       if (attempt < this.retries) {
         // Start over with a fresh browser in case it got stuck
-        await this.close();
+        await this.closeBrowser();
         await this.delay(this.retryDelay * attempt);
         return this.passChallenge(origin, attempt + 1);
       }
@@ -170,6 +242,10 @@ export class WebScraper {
   }
 
   public async getArticleLinks(source: Source): Promise<string[]> {
+    return this.exclusive(() => this.collectArticleLinks(source));
+  }
+
+  private async collectArticleLinks(source: Source): Promise<string[]> {
     try {
       const links = source.listingApi
         ? await this.getLinksFromApi(source)
@@ -294,6 +370,10 @@ export class WebScraper {
     url: string,
     source: Source
   ): Promise<ScrapedArticle | null> {
+    return this.exclusive(() => this.scrape(url, source));
+  }
+
+  private async scrape(url: string, source: Source): Promise<ScrapedArticle | null> {
     try {
       logger.debug(`Scraping article: ${url}`);
 
@@ -369,19 +449,13 @@ export class WebScraper {
       }
 
       // Parse date
-      let dateText = getTextFromSelectors(source.selectors.date);
-      let parsedDate: Date;
-      if (source.dateFormat && dateText) {
-        if (source.name === "Atomix") {
-          // "15/09/2026 4:47 p. m." -> "15/09/2026 4:47 pm" (dayjs only knows lowercase am/pm)
-          dateText = dateText.replace(/([ap])\.?\s*m\.?/i, (_, ap: string) => `${ap.toLowerCase()}m`).trim();
-        }
-        const dayjsDate = dayjs(dateText, source.dateFormat);
-        parsedDate = dayjsDate.isValid()
-          ? dayjsDate.toDate()
-          : dayjs().toDate();
-      } else {
-        parsedDate = new Date(dateText);
+      const dateText = getTextFromSelectors(source.selectors.date);
+      let parsedDate: Date | null = source.dateFormat
+        ? parseArticleDate(dateText, source.dateFormat)
+        : new Date(dateText);
+      if (!parsedDate || Number.isNaN(parsedDate.getTime())) {
+        logger.warn(`Could not parse date "${dateText}" for ${url}, using the current time`);
+        parsedDate = new Date();
       }
 
       const articleData: ScrapedArticle = {
@@ -402,12 +476,20 @@ export class WebScraper {
     }
   }
 
+  /** Closes Chromium once any job using it has finished. */
   public async close(): Promise<void> {
-    if (this.browser) {
-      await this.browser.close().catch(() => undefined);
-      this.browser = null;
-      this.page = null;
-      this.verifiedOrigin = null;
+    this.cancelIdleClose();
+    await this.lock;
+    await this.closeBrowser();
+  }
+
+  private async closeBrowser(): Promise<void> {
+    const browser = this.browser;
+    this.browser = null;
+    this.page = null;
+    this.verifiedOrigin = null;
+    if (browser) {
+      await browser.close().catch(() => undefined);
     }
   }
 }

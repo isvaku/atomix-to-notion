@@ -34,6 +34,15 @@ const EntrySchema: Schema = new Schema(
       type: Boolean,
       default: false,
     },
+    failed: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+    failedAt: {
+      type: Date,
+      required: false,
+    },
     entryErrors: {
       type: [String],
       default: [],

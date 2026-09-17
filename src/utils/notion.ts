@@ -1,4 +1,4 @@
-import parse, { HTMLElement, TextNode } from "node-html-parser";
+import parse, { HTMLElement, TextNode, Node } from "node-html-parser";
 
 import { Client } from "@notionhq/client";
 import type {
@@ -10,7 +10,12 @@ import { config } from "../config";
 import { logger } from "./logger";
 import { IEntry } from "../models";
 
-type RichText = {
+// Notion rejects rich text arrays longer than this in a single block
+const MAX_RICH_TEXT_ITEMS = 100;
+// Notion rejects URLs longer than this
+const MAX_URL_LENGTH = 2000;
+
+export type RichText = {
   type: "text";
   text: {
     content: string;
@@ -23,6 +28,165 @@ type RichText = {
   };
 };
 
+const truncate = (text: string | undefined, max: number = MAX_RICH_TEXT_LENGTH): string =>
+  (text ?? "").slice(0, max);
+
+/**
+ * Resolves a possibly relative URL against the article URL. Returns null for
+ * anything Notion would reject (non-http(s), unparsable or too long).
+ */
+export function resolveHttpUrl(value: string | undefined, baseUrl: string): string | null {
+  if (!value) return null;
+  try {
+    const url = new URL(value.trim(), baseUrl);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return null;
+    return url.href.length <= MAX_URL_LENGTH ? url.href : null;
+  } catch {
+    return null;
+  }
+}
+
+const text = (content: string, extra: Partial<RichText> = {}): RichText => ({
+  type: "text",
+  text: { content },
+  ...extra,
+});
+
+const endsWithSpace = (items: RichText[]): boolean =>
+  items.length === 0 || items[items.length - 1].text.content.endsWith(" ");
+
+/** Splits rich text items longer than Notion's per-item limit, keeping link and annotations. */
+function splitLongItems(items: RichText[]): RichText[] {
+  return items.flatMap((item) => {
+    const { content } = item.text;
+    if (content.length <= MAX_RICH_TEXT_LENGTH) return [item];
+
+    const parts: RichText[] = [];
+    for (let start = 0; start < content.length; start += MAX_RICH_TEXT_LENGTH) {
+      parts.push({
+        ...item,
+        text: { ...item.text, content: content.slice(start, start + MAX_RICH_TEXT_LENGTH) },
+      });
+    }
+    return parts;
+  });
+}
+
+/** Groups rich text into paragraph blocks within Notion's length and item limits. */
+function toParagraphBlocks(items: RichText[]): BlockObjectRequest[] {
+  const blocks: BlockObjectRequest[] = [];
+  let current: RichText[] = [];
+  let currentLength = 0;
+
+  const flush = () => {
+    if (current.length > 0) {
+      blocks.push({ object: "block", type: "paragraph", paragraph: { rich_text: current } });
+    }
+    current = [];
+    currentLength = 0;
+  };
+
+  for (const item of splitLongItems(items)) {
+    const length = item.text.content.length;
+    if (
+      currentLength + length > MAX_RICH_TEXT_LENGTH ||
+      current.length >= MAX_RICH_TEXT_ITEMS
+    ) {
+      flush();
+    }
+    current.push(item);
+    currentLength += length;
+  }
+  flush();
+
+  return blocks;
+}
+
+/**
+ * Converts article HTML into Notion blocks: paragraphs (with links, bold,
+ * italic and underline) and images. Text outside <p> elements is ignored.
+ */
+export function htmlToBlocks(html: string, baseUrl: string): BlockObjectRequest[] {
+  const blocks: BlockObjectRequest[] = [];
+
+  const processChildren = (node: HTMLElement, richText: RichText[]) => {
+    node.childNodes.forEach((child: Node) => {
+      if (child instanceof HTMLElement || child instanceof TextNode) {
+        processNode(child, richText);
+      }
+    });
+  };
+
+  const processNode = (node: HTMLElement | TextNode, richText: RichText[] = []): void => {
+    if (node instanceof TextNode) {
+      const content = node.text.trim();
+      if (content) richText.push(text(content));
+      return;
+    }
+
+    switch (node.tagName) {
+      case "P": {
+        const paragraph: RichText[] = [];
+        processChildren(node, paragraph);
+        blocks.push(...toParagraphBlocks(paragraph));
+        break;
+      }
+      case "A": {
+        const linkText = node.text.trim();
+        if (!linkText) break;
+
+        if (!endsWithSpace(richText)) richText.push(text(" "));
+        const url = resolveHttpUrl(node.getAttribute("href"), baseUrl);
+        richText.push(text(linkText, url ? { text: { content: linkText, link: { url } } } : {}));
+        richText.push(text(" "));
+        break;
+      }
+      case "IMG": {
+        // URLs are case-sensitive, so the src is kept as is
+        const url = resolveHttpUrl(node.getAttribute("src"), baseUrl);
+        if (url) {
+          blocks.push({ object: "block", type: "image", image: { type: "external", external: { url } } });
+        }
+        break;
+      }
+      case "B":
+      case "STRONG":
+      case "I":
+      case "EM":
+      case "U": {
+        const annotation: RichText["annotations"] =
+          node.tagName === "B" || node.tagName === "STRONG"
+            ? { bold: true }
+            : node.tagName === "U"
+              ? { underline: true }
+              : { italic: true };
+
+        const children: RichText[] = [];
+        processChildren(node, children);
+        children.forEach((child) => {
+          child.annotations = { ...child.annotations, ...annotation };
+        });
+
+        if (!endsWithSpace(richText)) richText.push(text(" "));
+        richText.push(...children);
+        if (!endsWithSpace(children)) richText.push(text(" "));
+        break;
+      }
+      default:
+        processChildren(node, richText);
+        break;
+    }
+  };
+
+  parse(html).childNodes.forEach((child: Node) => {
+    if (child instanceof HTMLElement || child instanceof TextNode) {
+      processNode(child);
+    }
+  });
+
+  return blocks.slice(0, MAX_BODY_LENGTH);
+}
+
 export class NotionClient {
   private notion: Client;
   private databaseId: string;
@@ -34,288 +198,51 @@ export class NotionClient {
     this.databaseId = config.notion.databaseId;
   }
 
-  public async createPage(entry: IEntry): Promise<boolean> {
-    try {
-      if (!config.notion.token || !this.databaseId) {
-        logger.error("Notion token or database ID not configured");
-        return false;
-      }
+  public isConfigured(): boolean {
+    return Boolean(config.notion.token && this.databaseId);
+  }
 
-      const noteBody: CreatePageParameters = {
-        parent: {
-          type: "database_id",
-          database_id: this.databaseId,
-        },
-        properties: {
-          title: {
-            title: [
-              {
-                text: {
-                  content: entry.title ?? "",
-                },
-              },
-            ],
-          },
-          author: {
-            rich_text: [
-              {
-                text: {
-                  content: entry.author ?? "",
-                },
-              },
-            ],
-          },
-          link: {
-            url: entry.link ?? "",
-          },
-          entryDate: {
-            date: {
-              start: entry.entryDate.toISOString(),
-            },
-          },
-          summary: {
-            rich_text: [
-              {
-                text: {
-                  content: entry.summary ?? "",
-                },
-              },
-            ],
-          },
-        },
-
-        children: [],
-      };
-
-      // Parse HTML content and convert it to Notion blocks
-      if (entry.content) {
-        const root = parse(entry.content);
-        const contentBlocks: BlockObjectRequest[] = [];
-
-        const processNode = (
-          node: HTMLElement | TextNode,
-          richTextArray: RichText[] = []
-        ): void => {
-          if (node instanceof TextNode) {
-            const textContent = node.text.trim();
-            if (textContent) {
-              richTextArray.push({
-                type: "text",
-                text: {
-                  content: textContent,
-                },
-              });
-            }
-          } else if (node instanceof HTMLElement) {
-            switch (node.tagName) {
-              case "P": {
-                const paragraphRichText: RichText[] = [];
-                node.childNodes.forEach((child) => {
-                  if (
-                    child instanceof HTMLElement ||
-                    child instanceof TextNode
-                  ) {
-                    processNode(child, paragraphRichText);
-                  }
-                });
-                if (paragraphRichText.length > 0) {
-                  let currentRichText: RichText[] = [];
-                  let currentLength = 0;
-
-                  paragraphRichText.forEach((richText) => {
-                    const textLength = richText.text.content.length;
-
-                    if (currentLength + textLength > MAX_RICH_TEXT_LENGTH) {
-                      // Push the current paragraph block and reset
-                      contentBlocks.push({
-                        object: "block",
-                        type: "paragraph",
-                        paragraph: {
-                          rich_text: currentRichText,
-                        },
-                      });
-                      currentRichText = [];
-                      currentLength = 0;
-                    }
-
-                    currentRichText.push(richText);
-                    currentLength += textLength;
-                  });
-
-                  // Push the remaining rich text as a paragraph block
-                  if (currentRichText.length > 0) {
-                    contentBlocks.push({
-                      object: "block",
-                      type: "paragraph",
-                      paragraph: {
-                        rich_text: currentRichText,
-                      },
-                    });
-                  }
-                }
-                break;
-              }
-              case "A": {
-                const linkText = node.text.trim();
-                const href = node.getAttribute("href") || "";
-                if (linkText) {
-                  if (
-                    richTextArray.length > 0 &&
-                    !richTextArray[
-                      richTextArray.length - 1
-                    ].text.content.endsWith(" ")
-                  ) {
-                    richTextArray.push({
-                      type: "text",
-                      text: {
-                        content: " ",
-                      },
-                    });
-                  }
-                  richTextArray.push({
-                    type: "text",
-                    text: {
-                      content: linkText,
-                      link: { url: href },
-                    },
-                  });
-                  if (
-                    richTextArray.length > 0 &&
-                    !richTextArray[
-                      richTextArray.length - 1
-                    ].text.content.endsWith(" ")
-                  ) {
-                    richTextArray.push({
-                      type: "text",
-                      text: {
-                        content: " ",
-                      },
-                    });
-                  }
-                }
-                break;
-              }
-              case "IMG": {
-                const src = node.getAttribute("src")?.toLocaleLowerCase() || "";
-                if (src) {
-                  contentBlocks.push({
-                    object: "block",
-                    type: "image",
-                    image: {
-                      type: "external",
-                      external: { url: src },
-                    },
-                  });
-                }
-                break;
-              }
-              case "B":
-              case "STRONG":
-              case "I":
-              case "EM":
-              case "U": {
-                const annotation: RichText["annotations"] = {};
-                if (node.tagName === "B" || node.tagName === "STRONG") {
-                  annotation.bold = true;
-                } else if (node.tagName === "I" || node.tagName === "EM") {
-                  annotation.italic = true;
-                } else if (node.tagName === "U") {
-                  annotation.underline = true;
-                }
-
-                const childRichText: RichText[] = [];
-                node.childNodes.forEach((child) => {
-                  if (
-                    child instanceof HTMLElement ||
-                    child instanceof TextNode
-                  ) {
-                    processNode(child, childRichText);
-                  }
-                });
-
-                childRichText.forEach((richText) => {
-                  richText.annotations = {
-                    ...richText.annotations,
-                    ...annotation,
-                  };
-                });
-
-                if (
-                  richTextArray.length > 0 &&
-                  !richTextArray[
-                    richTextArray.length - 1
-                  ].text.content.endsWith(" ")
-                ) {
-                  richTextArray.push({
-                    type: "text",
-                    text: {
-                      content: " ",
-                    },
-                  });
-                }
-
-                richTextArray.push(...childRichText);
-
-                if (
-                  childRichText.length > 0 &&
-                  !childRichText[
-                    childRichText.length - 1
-                  ].text.content.endsWith(" ")
-                ) {
-                  richTextArray.push({
-                    type: "text",
-                    text: {
-                      content: " ",
-                    },
-                  });
-                }
-                break;
-              }
-              default:
-                node.childNodes.forEach((child) => {
-                  if (
-                    child instanceof HTMLElement ||
-                    child instanceof TextNode
-                  ) {
-                    processNode(child, richTextArray);
-                  }
-                });
-                break;
-            }
-          }
-        };
-
-        root.childNodes.forEach((child) => {
-          if (child instanceof HTMLElement || child instanceof TextNode) {
-            processNode(child);
-          }
-        });
-
-        // Limit blocks to MAX_BODY_LENGTH
-        noteBody.children = contentBlocks.slice(0, MAX_BODY_LENGTH);
-      }
-
-      if (noteBody.children && noteBody.children.length > MAX_BODY_LENGTH)
-        noteBody.children = noteBody.children?.slice(0, MAX_BODY_LENGTH);
-
-      await this.notion.pages.create(noteBody);
-
-      logger.info(
-        `Successfully created Notion page for entry: ${entry.entryId}`
-      );
-      return true;
-    } catch (error) {
-      logger.error(
-        `Failed to create Notion page for entry ${entry.entryId}:`,
-        error
-      );
-      return false;
+  /** Creates the Notion page for an entry. Throws on failure so the queue can retry. */
+  public async createPage(entry: IEntry): Promise<void> {
+    if (!this.isConfigured()) {
+      throw new Error("Notion token or database ID not configured");
     }
+
+    const noteBody: CreatePageParameters = {
+      parent: {
+        type: "database_id",
+        database_id: this.databaseId,
+      },
+      properties: {
+        title: {
+          title: [{ text: { content: truncate(entry.title) } }],
+        },
+        author: {
+          rich_text: [{ text: { content: truncate(entry.author) } }],
+        },
+        link: {
+          url: entry.link ?? "",
+        },
+        entryDate: {
+          date: {
+            start: entry.entryDate.toISOString(),
+          },
+        },
+        summary: {
+          rich_text: [{ text: { content: truncate(entry.summary) } }],
+        },
+      },
+      children: entry.content ? htmlToBlocks(entry.content, entry.link) : [],
+    };
+
+    await this.notion.pages.create(noteBody);
+
+    logger.info(`Successfully created Notion page for entry: ${entry.entryId}`);
   }
 
   public async testConnection(): Promise<boolean> {
     try {
-      if (!config.notion.token || !this.databaseId) {
+      if (!this.isConfigured()) {
         logger.error("Notion token or database ID not configured");
         return false;
       }
@@ -329,18 +256,6 @@ export class NotionClient {
     } catch (error) {
       logger.error("Notion connection test failed:", error);
       return false;
-    }
-  }
-
-  public async createDatabaseIfNotExists(): Promise<void> {
-    try {
-      // This would require a parent page ID and is more complex
-      // For now, we assume the database exists
-      logger.info(
-        "Database creation not implemented - please create the Notion database manually"
-      );
-    } catch (error) {
-      logger.error("Failed to create Notion database:", error);
     }
   }
 }
