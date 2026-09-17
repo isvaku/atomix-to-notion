@@ -19,7 +19,7 @@ const errorMessage = (error: unknown): string =>
  */
 export async function processNotionSyncJob(
   job: Job<NotionSyncJobData>,
-  notion: Pick<NotionClient, "createPage">
+  notion: Pick<NotionClient, "syncEntry">
 ): Promise<NotionSyncJobResult> {
   const entry = await EntryModel.findById(job.data.entryId);
   if (!entry) {
@@ -30,7 +30,7 @@ export async function processNotionSyncJob(
   }
 
   try {
-    await notion.createPage(entry);
+    await notion.syncEntry(entry);
   } catch (error) {
     const attempts = job.opts.attempts ?? 1;
     // attemptsMade counts finished attempts, so this one is attemptsMade + 1

@@ -1,8 +1,9 @@
 #!/usr/bin/env tsx
 /**
- * Re-imports Notion pages that came out empty (e.g. from an earlier manual
- * import): it reads their links, queues them for crawling and archives the
- * empty pages, so each article ends up with one good page.
+ * Re-fills Notion pages that came out empty (e.g. from an earlier manual
+ * import): it reads their links and queues them for crawling. The sync then
+ * updates those same pages in place - author, entry date, summary and content -
+ * so nothing is deleted or duplicated.
  *
  * A page counts as failed when it has neither an author nor an entry date.
  *
@@ -111,6 +112,31 @@ interface CrawlResponse {
   rejected: { link: string; reason: string }[];
 }
 
+/** Asks the app to write stored articles to Notion again, updating their pages. */
+async function resyncLinks(links: string[]): Promise<string[]> {
+  const resynced: string[] = [];
+
+  for (let start = 0; start < links.length; start += 100) {
+    const response = await fetch(`${API_URL}/api/resync`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${config.server.apiKey}`,
+      },
+      body: JSON.stringify({ links: links.slice(start, start + 100) }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`${API_URL}/api/resync responded ${response.status}: ${await response.text()}`);
+    }
+
+    const batch = (await response.json()) as { resynced: string[] };
+    resynced.push(...batch.resynced);
+  }
+
+  return resynced;
+}
+
 async function queueLinks(links: string[]): Promise<CrawlResponse> {
   const all: CrawlResponse = { queued: [], skipped: [], rejected: [] };
 
@@ -163,7 +189,7 @@ async function main(): Promise<void> {
   logger.info(`Found ${empty.length} empty pages. Links written to ${OUT_FILE}`);
 
   if (!APPLY) {
-    logger.info("Dry run: nothing was queued or archived. Re-run with --apply to do it.");
+    logger.info("Dry run: nothing was queued. Re-run with --apply to do it.");
     return;
   }
 
@@ -173,29 +199,22 @@ async function main(): Promise<void> {
 
   const result = await queueLinks(links);
   logger.info(
-    `Queued ${result.queued.length}, skipped ${result.skipped.length}, rejected ${result.rejected.length}`
+    `Queued ${result.queued.length}, already crawled ${result.skipped.length}, rejected ${result.rejected.length}`
   );
 
   for (const item of result.rejected) {
-    logger.warn(`Not a crawlable link, page kept: ${item.link} (${item.reason})`);
+    logger.warn(`Not a crawlable link, page left as is: ${item.link} (${item.reason})`);
   }
 
-  // Only archive pages the crawler accepted. A rejected link would otherwise
-  // lose its page without ever getting a new one.
-  const rejected = new Set(result.rejected.map((item) => item.link));
-  const toArchive = empty.filter((page) => !rejected.has(page.url));
-
-  let archived = 0;
-  for (const page of toArchive) {
-    await notion.pages.update({ page_id: page.id, archived: true });
-    archived++;
-    await delay(REQUEST_DELAY_MS);
-    if (archived % 25 === 0) {
-      logger.info(`Archived ${archived}/${toArchive.length} pages`);
-    }
+  // Links we already have in MongoDB aren't crawled again, so their pages are
+  // filled from what's stored instead
+  const alreadyCrawled = result.skipped.map((item) => item.link);
+  if (alreadyCrawled.length > 0) {
+    const resynced = await resyncLinks(alreadyCrawled);
+    logger.info(`Queued ${resynced.length} already-crawled articles for a Notion update`);
   }
 
-  logger.info(`Done. Archived ${archived} empty pages; the crawler is refilling them.`);
+  logger.info("Done. The pages are updated in place as each article is processed.");
   logger.info("Watch progress on the dashboard, or with GET /api/status");
 }
 

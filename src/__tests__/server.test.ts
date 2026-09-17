@@ -100,6 +100,36 @@ describe("POST /api/crawl", () => {
   });
 });
 
+describe("POST /api/resync", () => {
+  it("queues a stored article for Notion again", async () => {
+    const entry = await EntryModel.create({
+      entryId: "x",
+      content: "x",
+      link: "https://atomix.vg/an-article",
+      entryDate: new Date(),
+      created: true,
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/resync",
+      headers: auth,
+      payload: { links: ["https://atomix.vg/an-article", "https://atomix.vg/unknown"] },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({
+      resynced: ["https://atomix.vg/an-article"],
+      notFound: ["https://atomix.vg/unknown"],
+    });
+
+    // Marked unsynced so the worker writes it to Notion again
+    const updated = await EntryModel.findById(entry._id);
+    expect(updated?.created).toBe(false);
+    expect(await notionSyncQueue.getJobCounts("waiting")).toMatchObject({ waiting: 1 });
+  });
+});
+
 describe("status endpoints", () => {
   it("reports a queued job and then its entry", async () => {
     const queued = await app.inject({

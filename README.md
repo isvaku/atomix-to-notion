@@ -17,6 +17,8 @@ POST /api/crawl {links:[…]} ────────┘      3 attempts, expon
                                            │ scrape + save to MongoDB
                                            └─> queue "notion-sync"
                                                  5 attempts, max 3 requests/second
+                                                 │ updates the page with this link,
+                                                 │ or creates one
                                                  ├ ok     → entry marked created
                                                  └ failed → entry marked failed
 schedule "sweep" (hourly): re-queues entries that never reached Notion
@@ -79,6 +81,7 @@ Up to 100 links per request. Links are normalized (`www`, trailing slash, query 
 | `GET /api/crawl/:jobId` | State of one crawl job and of its Notion sync. |
 | `GET /api/status` | Everything the dashboard shows. |
 | `POST /api/retry-failed` | Queues failed crawls and failed Notion syncs again. |
+| `POST /api/resync` | Writes stored articles to Notion again, by link, updating their pages. |
 | `POST /api/schedulers/:name/run` | Runs `discover`, `sweep-unsynced` or `daily-report` now. |
 | `POST /api/report` | Sends the Telegram report immediately. |
 
@@ -105,7 +108,7 @@ pnpm dev          # starts everything, dashboard on http://localhost:3000
 | `pnpm notion-sync` | Syncs everything not yet in Notion, then exits. |
 | `pnpm report` | Sends the report now. |
 | `pnpm retry-failed` | Queues failed crawls and syncs again. |
-| `pnpm reimport-notion` | Finds Notion pages with no author and no entry date (a failed manual import), queues their links and archives the empty pages. Dry run unless `--apply`; see the [script](src/scripts/reimport-from-notion.ts) for options. |
+| `pnpm reimport-notion` | Finds Notion pages with no author and no entry date (a failed manual import) and fills them in, updating each page in place. Dry run unless `--apply`; see the [script](src/scripts/reimport-from-notion.ts) for options. |
 | `pnpm test` | Jest (needs MongoDB and Redis; uses separate test databases). |
 | `pnpm lint` / `pnpm build` | ESLint / TypeScript build. |
 
@@ -128,6 +131,8 @@ See [`.env.example`](.env.example) for the full list. The ones that matter most:
 | `TZ` | `America/Mexico_City` | Schedules and displayed dates. **Wrong value = wrong article dates.** |
 | `BROWSER_TIMEOUT_MS` | `180000` | Raise it if a slow Pi times out starting Chromium. |
 | `BROWSER_IDLE_CLOSE_MS` | `120000` | Chromium closes after this long with no work. |
+
+Syncing is **idempotent**: a page is looked up by its `link` property and updated if it exists, so re-syncing corrects a page rather than creating a duplicate. Body content is only added to a page that has none, so an edited page keeps its text.
 
 The Notion database needs these properties: `title` (Title), `link` (URL), `author` (Rich text), `summary` (Rich text), `entryDate` (Date). Share it with your integration.
 

@@ -7,7 +7,7 @@ import { database } from "../database";
 import { isRedisHealthy } from "../queue/connection";
 import { SCHEDULERS, SchedulerName, enqueueLinks, runMaintenanceNow } from "../queue/queues";
 import { sendDailyReport } from "../services/report";
-import { retryFailed } from "../services/retry";
+import { resyncLinks, retryFailed } from "../services/retry";
 import { getCrawlJobStatus, getStatus } from "../services/status";
 import { logger } from "../utils/logger";
 
@@ -100,6 +100,28 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
   app.get("/api/status", async () => getStatus());
 
   app.post("/api/retry-failed", async () => retryFailed());
+
+  app.post<{ Body: { links: string[] } }>(
+    "/api/resync",
+    {
+      schema: {
+        body: {
+          type: "object",
+          required: ["links"],
+          additionalProperties: false,
+          properties: {
+            links: {
+              type: "array",
+              minItems: 1,
+              maxItems: config.server.maxLinksPerRequest,
+              items: { type: "string", minLength: 1, maxLength: 2000 },
+            },
+          },
+        },
+      },
+    },
+    async (request) => resyncLinks(request.body.links)
+  );
 
   app.post<{ Params: { name: string } }>("/api/schedulers/:name/run", async (request, reply) => {
     const name = request.params.name as SchedulerName;

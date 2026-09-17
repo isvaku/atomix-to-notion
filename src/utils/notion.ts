@@ -202,42 +202,83 @@ export class NotionClient {
     return Boolean(config.notion.token && this.databaseId);
   }
 
-  /** Creates the Notion page for an entry. Throws on failure so the queue can retry. */
-  public async createPage(entry: IEntry): Promise<void> {
+  private buildProperties(entry: IEntry): CreatePageParameters["properties"] {
+    return {
+      title: {
+        title: [{ text: { content: truncate(entry.title) } }],
+      },
+      author: {
+        rich_text: [{ text: { content: truncate(entry.author) } }],
+      },
+      link: {
+        url: entry.link ?? "",
+      },
+      entryDate: {
+        date: {
+          start: entry.entryDate.toISOString(),
+        },
+      },
+      summary: {
+        rich_text: [{ text: { content: truncate(entry.summary) } }],
+      },
+    };
+  }
+
+  /** Finds a page in the database with this exact link, if there is one. */
+  private async findPageByLink(link: string): Promise<string | null> {
+    const { results } = await this.notion.databases.query({
+      database_id: this.databaseId,
+      filter: { property: "link", url: { equals: link } },
+      page_size: 1,
+    });
+
+    return results[0]?.id ?? null;
+  }
+
+  private async hasContent(pageId: string): Promise<boolean> {
+    const { results } = await this.notion.blocks.children.list({
+      block_id: pageId,
+      page_size: 1,
+    });
+    return results.length > 0;
+  }
+
+  /**
+   * Writes an entry to Notion: updates the page that already has this link, or
+   * creates one. Existing pages keep their id, comments and creation date, and
+   * content is only added when the page has none, so nothing is duplicated.
+   * Throws on failure so the queue can retry.
+   */
+  public async syncEntry(entry: IEntry): Promise<"created" | "updated"> {
     if (!this.isConfigured()) {
       throw new Error("Notion token or database ID not configured");
     }
 
-    const noteBody: CreatePageParameters = {
-      parent: {
-        type: "database_id",
-        database_id: this.databaseId,
-      },
-      properties: {
-        title: {
-          title: [{ text: { content: truncate(entry.title) } }],
-        },
-        author: {
-          rich_text: [{ text: { content: truncate(entry.author) } }],
-        },
-        link: {
-          url: entry.link ?? "",
-        },
-        entryDate: {
-          date: {
-            start: entry.entryDate.toISOString(),
-          },
-        },
-        summary: {
-          rich_text: [{ text: { content: truncate(entry.summary) } }],
-        },
-      },
-      children: entry.content ? htmlToBlocks(entry.content, entry.link) : [],
-    };
+    const properties = this.buildProperties(entry);
+    const children = entry.content ? htmlToBlocks(entry.content, entry.link) : [];
+    const existingPageId = await this.findPageByLink(entry.link);
 
-    await this.notion.pages.create(noteBody);
+    if (!existingPageId) {
+      await this.notion.pages.create({
+        parent: { type: "database_id", database_id: this.databaseId },
+        properties,
+        children,
+      });
+      logger.info(`Created Notion page for entry: ${entry.entryId}`);
+      return "created";
+    }
 
-    logger.info(`Successfully created Notion page for entry: ${entry.entryId}`);
+    await this.notion.pages.update({ page_id: existingPageId, properties });
+
+    if (children.length > 0 && !(await this.hasContent(existingPageId))) {
+      await this.notion.blocks.children.append({
+        block_id: existingPageId,
+        children,
+      });
+    }
+
+    logger.info(`Updated existing Notion page for entry: ${entry.entryId}`);
+    return "updated";
   }
 
   public async testConnection(): Promise<boolean> {

@@ -91,7 +91,7 @@ describe("notion sync worker", () => {
 
   it("marks the entry as created on success", async () => {
     const entry = await createEntry();
-    const notion = { createPage: jest.fn().mockResolvedValue(undefined) };
+    const notion = { syncEntry: jest.fn().mockResolvedValue(undefined) };
 
     await processNotionSyncJob(syncJob(String(entry._id)), notion);
 
@@ -102,7 +102,7 @@ describe("notion sync worker", () => {
 
   it("records the error and rethrows while attempts are left", async () => {
     const entry = await createEntry();
-    const notion = { createPage: jest.fn().mockRejectedValue(new Error("notion down")) };
+    const notion = { syncEntry: jest.fn().mockRejectedValue(new Error("notion down")) };
 
     await expect(processNotionSyncJob(syncJob(String(entry._id), 0), notion)).rejects.toThrow("notion down");
 
@@ -113,7 +113,7 @@ describe("notion sync worker", () => {
 
   it("marks the entry as failed on the last attempt", async () => {
     const entry = await createEntry();
-    const notion = { createPage: jest.fn().mockRejectedValue(new Error("notion down")) };
+    const notion = { syncEntry: jest.fn().mockRejectedValue(new Error("notion down")) };
 
     await expect(processNotionSyncJob(syncJob(String(entry._id), 4), notion)).rejects.toThrow();
 
@@ -125,12 +125,12 @@ describe("notion sync worker", () => {
   it("does nothing when the entry is already in Notion", async () => {
     const entry = await createEntry();
     await EntryModel.updateOne({ _id: entry._id }, { $set: { created: true } });
-    const notion = { createPage: jest.fn() };
+    const notion = { syncEntry: jest.fn() };
 
     const result = await processNotionSyncJob(syncJob(String(entry._id)), notion);
 
     expect(result.skipped).toBe("already-created");
-    expect(notion.createPage).not.toHaveBeenCalled();
+    expect(notion.syncEntry).not.toHaveBeenCalled();
   });
 
   it("retryFailed clears the failed state and queues the entry again", async () => {
