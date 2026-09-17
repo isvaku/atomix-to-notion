@@ -99,3 +99,7 @@ jspm_packages/
 
 # TernJS port file
 .tern-port
+
+# Link lists for manual ingestion
+ingest*.txt
+notion-reimport.txt
