@@ -64,9 +64,13 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Extract version from package.json
-        id: version
-        run: echo "version=$(jq -r .version package.json)" >> "$GITHUB_OUTPUT"
+      - name: Read version and commit
+        id: meta
+        run: |
+          {
+            echo "version=$(jq -r .version package.json)"
+            echo "sha=$(git rev-parse --short HEAD)"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Log in to Docker Hub
         # Pull requests build the image but don't publish it
@@ -75,6 +79,18 @@ jobs:
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
+
+      # A published version tag must keep pointing at the same image, so the
+      # version in package.json has to be bumped before publishing again
+      - name: Refuse to overwrite an existing version tag
+        if: github.event_name == 'push'
+        run: |
+          IMAGE="${{ secrets.DOCKER_USERNAME }}/atomix-to-notion:${{ steps.meta.outputs.version }}"
+          if docker manifest inspect "$IMAGE" > /dev/null 2>&1; then
+            echo "::error::$IMAGE already exists. Bump \"version\" in package.json before merging."
+            exit 1
+          fi
+          echo "$IMAGE is free"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -87,6 +103,11 @@ jobs:
           push: ${{ github.event_name == 'push' }}
           tags: |
             ${{ secrets.DOCKER_USERNAME }}/atomix-to-notion:latest
-            ${{ secrets.DOCKER_USERNAME }}/atomix-to-notion:${{ steps.version.outputs.version }}
+            ${{ secrets.DOCKER_USERNAME }}/atomix-to-notion:${{ steps.meta.outputs.version }}
+            ${{ secrets.DOCKER_USERNAME }}/atomix-to-notion:sha-${{ steps.meta.outputs.sha }}
+          labels: |
+            org.opencontainers.image.version=${{ steps.meta.outputs.version }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
           cache-from: type=gha
           cache-to: type=gha,mode=max

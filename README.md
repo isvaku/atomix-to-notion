@@ -48,7 +48,17 @@ docker compose up -d
 
 The dashboard is then at `http://<pi>:3000`, and asks for the API key. For access from outside your network, put it behind a reverse proxy with HTTPS.
 
-To pin a version instead of `latest`, set `IMAGE_TAG=1.1.0` in `.env`.
+To pin a build instead of following `latest`, set `IMAGE_TAG` in `.env` to a version (`1.2.0`) or to a commit (`sha-1853076`). Both always point at the exact image that was built from that commit.
+
+### Releasing
+
+Every push to `main` publishes `latest`, the version from `package.json` and `sha-<commit>`. A version tag is never overwritten: if `package.json` still has a version that was already published, CI fails and asks you to bump it. So bump `version` in the same commit (or PR) as the change you want to ship.
+
+To see what a running container actually is:
+
+```bash
+docker inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' <container>
+```
 
 ## API
 
