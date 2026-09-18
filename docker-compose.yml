@@ -18,6 +18,15 @@ services:
       CRAWLER_INTERVAL: ${CRAWLER_INTERVAL:-*/15 * * * *}
       NOTION_SYNC_INTERVAL: ${NOTION_SYNC_INTERVAL:-0 * * * *}
       REPORT_INTERVAL: ${REPORT_INTERVAL:-0 9 * * *}
+      REPORT_ALWAYS: ${REPORT_ALWAYS:-false}
+      # Alerting
+      HEALTHCHECK_PING_URL: ${HEALTHCHECK_PING_URL:-}
+      DISCOVER_ALERT_COOLDOWN_MINUTES: ${DISCOVER_ALERT_COOLDOWN_MINUTES:-360}
+      # Tuning, mostly useful on a slower Pi
+      BROWSER_TIMEOUT_MS: ${BROWSER_TIMEOUT_MS:-180000}
+      BROWSER_IDLE_CLOSE_MS: ${BROWSER_IDLE_CLOSE_MS:-120000}
+      MAX_ARTICLES_PER_RUN: ${MAX_ARTICLES_PER_RUN:-100}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
     ports:
       # Dashboard and API. Put a reverse proxy in front for access outside the LAN
       - "${API_PORT:-3000}:3000"
