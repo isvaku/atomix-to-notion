@@ -1,10 +1,16 @@
-# Dependencies allowed to run install scripts (pnpm blocks them by default)
+# No dependency runs install scripts, so a compromised package can't execute
+# code during install. Nothing here needs them: esbuild and unrs-resolver ship
+# platform binaries as optional dependencies, msgpackr falls back to
+# JavaScript, and Chromium comes from the system (Docker) or, for local runs,
+# `npx puppeteer browsers install chrome`.
 allowBuilds:
-  # tsx: installs the esbuild binary for the platform
-  esbuild: true
-  # bullmq: optional native msgpack speedup (prebuilt binaries)
-  msgpackr-extract: true
-  # Downloads Chrome for local runs; Docker sets PUPPETEER_SKIP_DOWNLOAD and uses Debian's chromium
-  puppeteer: true
-  # jest's module resolver
-  unrs-resolver: true
+  "@parcel/watcher": false
+  esbuild: false
+  msgpackr-extract: false
+  puppeteer: false
+  unrs-resolver: false
+
+# Don't install a version until it has been public for a week. Compromised
+# releases are usually caught and unpublished within hours, so waiting keeps
+# them out of the lockfile.
+minimumReleaseAge: 10080

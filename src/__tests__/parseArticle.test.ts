@@ -1,7 +1,7 @@
 import { readFileSync } from "fs";
 import path from "path";
 import { config, Source } from "../config";
-import { parseArticle } from "../utils/scraper";
+import { parseArticle } from "../utils/articleParser";
 
 // A real article page, saved so a site change shows up here instead of in production
 const html = readFileSync(path.join(__dirname, "fixtures/atomix-article.html"), "utf8");

@@ -1,4 +1,4 @@
-import { parseArticleDate } from "../utils/scraper";
+import { parseArticleDate } from "../utils/articleParser";
 
 const FORMAT = "DD/MM/YYYY h:mm a";
 const local = (date: Date | null) => (date ? date.toString().slice(0, 21) : null);

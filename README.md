@@ -133,6 +133,20 @@ pnpm dev          # starts everything, dashboard on http://localhost:3000
 
 Tests never touch your real data: [`jest.setup.js`](jest.setup.js) forces `MONGODB_TEST_URI` / `REDIS_TEST_URL` (defaults: localhost, `atomix-test`) before anything loads.
 
+### Dependencies
+
+Two rules in [`pnpm-workspace.yaml`](pnpm-workspace.yaml) limit supply-chain exposure:
+
+- **No install scripts run.** A compromised package can't execute code when it's installed. Nothing here needs them, but local runs then have no bundled Chrome — install it once with `npx puppeteer browsers install chrome` (Docker uses the system Chromium anyway).
+- **`minimumReleaseAge: 10080`** — a version has to be public for a week before it can enter the lockfile, since compromised releases are usually caught within hours. Adding a just-published package fails with `ERR_PNPM_NO_MATURE_MATCHING_VERSION`; wait, or relax the range.
+
+Two majors are deliberately held back:
+
+| Package | Held at | Why |
+|---|---|---|
+| `mongoose` | 8.x | Under Jest, 9.x fails the MongoDB handshake with `Missing required sub-document 'driver'`. It works outside Jest, but the tests are the safety net. |
+| `typescript` | 5.x | `ts-jest` doesn't support 7.x, which needs `@typescript/native` plus a compiler alias. 7.x type-checks this code cleanly, so it's only the test runner holding it. |
+
 > On Windows, pnpm 12 can corrupt `node_modules` when installing on top of an existing tree. If a package goes missing, `rm -rf node_modules && pnpm install`.
 
 ## Configuration

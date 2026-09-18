@@ -264,6 +264,21 @@ export function chunkBlocks(blocks: BlockObjectRequest[]): BlockObjectRequest[][
   return chunks;
 }
 
+/**
+ * Finds the database's first data source. Since API version 2025-09-03 a
+ * database holds one or more data sources, and queries address those rather
+ * than the database.
+ */
+export async function resolveDataSourceId(notion: Client, databaseId: string): Promise<string> {
+  const database = await notion.databases.retrieve({ database_id: databaseId });
+  const dataSourceId = (database as { data_sources?: { id: string }[] }).data_sources?.[0]?.id;
+
+  if (!dataSourceId) {
+    throw new Error(`Notion database ${databaseId} has no data source`);
+  }
+  return dataSourceId;
+}
+
 export interface NotionClientOptions {
   token?: string;
   databaseId?: string;
@@ -273,6 +288,7 @@ export class NotionClient {
   private notion: Client;
   private token: string;
   private databaseId: string;
+  private dataSourceId: string | null = null;
 
   constructor(options: NotionClientOptions = {}) {
     this.token = options.token ?? config.notion.token;
@@ -306,10 +322,15 @@ export class NotionClient {
     };
   }
 
+  private async getDataSourceId(): Promise<string> {
+    this.dataSourceId ??= await resolveDataSourceId(this.notion, this.databaseId);
+    return this.dataSourceId;
+  }
+
   /** Finds a page in the database with this exact link, if there is one. */
   private async findPageByLink(link: string): Promise<string | null> {
-    const { results } = await this.notion.databases.query({
-      database_id: this.databaseId,
+    const { results } = await this.notion.dataSources.query({
+      data_source_id: await this.getDataSourceId(),
       filter: { property: "link", url: { equals: link } },
       page_size: 1,
     });

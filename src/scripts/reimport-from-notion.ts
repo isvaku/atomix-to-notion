@@ -22,6 +22,7 @@ import { Client, isFullPage } from "@notionhq/client";
 import { writeFileSync } from "fs";
 import { config } from "../config";
 import { logger } from "../utils";
+import { resolveDataSourceId } from "../utils/notion";
 
 interface EmptyPage {
   id: string;
@@ -45,6 +46,12 @@ const REQUEST_DELAY_MS = 350;
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const notion = new Client({ auth: config.notion.token });
+
+let dataSourceId: string | null = null;
+const getDataSourceId = async (): Promise<string> => {
+  dataSourceId ??= await resolveDataSourceId(notion, config.notion.databaseId);
+  return dataSourceId;
+};
 
 /** Reads the article URL from the page's "link" property. */
 function getLink(page: { properties: Record<string, unknown> }): string | null {
@@ -78,8 +85,8 @@ async function findEmptyPages(): Promise<EmptyPage[]> {
   let cursor: string | undefined;
 
   do {
-    const response = await notion.databases.query({
-      database_id: config.notion.databaseId,
+    const response = await notion.dataSources.query({
+      data_source_id: await getDataSourceId(),
       filter: EMPTY_PAGE_FILTER,
       page_size: 100,
       start_cursor: cursor,

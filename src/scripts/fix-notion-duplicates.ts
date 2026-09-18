@@ -22,6 +22,7 @@ import { config } from "../config";
 import { database } from "../database";
 import { EntryModel } from "../models";
 import { logger } from "../utils";
+import { resolveDataSourceId } from "../utils/notion";
 
 const APPLY = process.argv.includes("--apply");
 // Notion allows about 3 requests per second
@@ -31,6 +32,12 @@ const THIN_PAGE_BLOCKS = 2;
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const notion = new Client({ auth: config.notion.token });
+
+let dataSourceId: string | null = null;
+const getDataSourceId = async (): Promise<string> => {
+  dataSourceId ??= await resolveDataSourceId(notion, config.notion.databaseId);
+  return dataSourceId;
+};
 
 interface PageInfo {
   id: string;
@@ -46,8 +53,8 @@ async function loadPages(): Promise<Map<string, PageInfo[]>> {
   let cursor: string | undefined;
 
   do {
-    const response = await notion.databases.query({
-      database_id: config.notion.databaseId,
+    const response = await notion.dataSources.query({
+      data_source_id: await getDataSourceId(),
       page_size: 100,
       start_cursor: cursor,
     });

@@ -1,13 +1,15 @@
 const pagesCreate = jest.fn().mockResolvedValue({ id: "new-page" });
 const pagesUpdate = jest.fn().mockResolvedValue({});
-const databasesQuery = jest.fn();
+const dataSourcesQuery = jest.fn();
+const databasesRetrieve = jest.fn().mockResolvedValue({ data_sources: [{ id: "data-source" }] });
 const blocksList = jest.fn();
 const blocksAppend = jest.fn().mockResolvedValue({});
 
 jest.mock("@notionhq/client", () => ({
   Client: jest.fn().mockImplementation(() => ({
     pages: { create: pagesCreate, update: pagesUpdate },
-    databases: { query: databasesQuery },
+    databases: { retrieve: databasesRetrieve },
+    dataSources: { query: dataSourcesQuery },
     blocks: { children: { list: blocksList, append: blocksAppend } },
   })),
 }));
@@ -35,7 +37,7 @@ describe("NotionClient.syncEntry", () => {
   });
 
   it("creates a page when no page has that link", async () => {
-    databasesQuery.mockResolvedValue({ results: [] });
+    dataSourcesQuery.mockResolvedValue({ results: [] });
 
     expect(await notion.syncEntry(entry)).toBe("created");
     expect(pagesCreate).toHaveBeenCalledTimes(1);
@@ -47,7 +49,7 @@ describe("NotionClient.syncEntry", () => {
   });
 
   it("updates the existing page instead of creating a second one", async () => {
-    databasesQuery.mockResolvedValue({ results: [{ id: "existing-page" }] });
+    dataSourcesQuery.mockResolvedValue({ results: [{ id: "existing-page" }] });
     blocksList.mockResolvedValue({ results: [] });
 
     expect(await notion.syncEntry(entry)).toBe("updated");
@@ -63,7 +65,7 @@ describe("NotionClient.syncEntry", () => {
   });
 
   it("adds the article body to a page that has none", async () => {
-    databasesQuery.mockResolvedValue({ results: [{ id: "existing-page" }] });
+    dataSourcesQuery.mockResolvedValue({ results: [{ id: "existing-page" }] });
     blocksList.mockResolvedValue({ results: [] });
 
     await notion.syncEntry(entry);
@@ -73,7 +75,7 @@ describe("NotionClient.syncEntry", () => {
   });
 
   it("leaves the body alone when the page already has content", async () => {
-    databasesQuery.mockResolvedValue({ results: [{ id: "existing-page" }] });
+    dataSourcesQuery.mockResolvedValue({ results: [{ id: "existing-page" }] });
     blocksList.mockResolvedValue({ results: [{ id: "block-1" }] });
 
     await notion.syncEntry(entry);
@@ -82,14 +84,23 @@ describe("NotionClient.syncEntry", () => {
     expect(blocksAppend).not.toHaveBeenCalled();
   });
 
-  it("looks the page up by its exact link", async () => {
-    databasesQuery.mockResolvedValue({ results: [] });
+  it("looks the page up by its exact link, in the database's data source", async () => {
+    dataSourcesQuery.mockResolvedValue({ results: [] });
 
     await notion.syncEntry(entry);
 
-    expect(databasesQuery.mock.calls[0][0].filter).toEqual({
-      property: "link",
-      url: { equals: "https://atomix.vg/an-article" },
+    expect(dataSourcesQuery.mock.calls[0][0]).toMatchObject({
+      data_source_id: "data-source",
+      filter: { property: "link", url: { equals: "https://atomix.vg/an-article" } },
     });
+  });
+
+  it("looks the data source up once, then reuses it", async () => {
+    dataSourcesQuery.mockResolvedValue({ results: [] });
+
+    await notion.syncEntry(entry);
+    await notion.syncEntry(entry);
+
+    expect(databasesRetrieve).toHaveBeenCalledTimes(1);
   });
 });
