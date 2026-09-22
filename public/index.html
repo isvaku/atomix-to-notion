@@ -127,6 +127,7 @@
         <div class="card tile"><div class="label">In Notion</div><div class="value" id="synced">–</div></div>
         <div class="card tile"><div class="label">Pending sync</div><div class="value" id="pending">–</div></div>
         <div class="card tile"><div class="label">Failed</div><div class="value" id="failed">–</div></div>
+        <div class="card tile"><div class="label">Database</div><div class="value" id="storage">–</div><div class="secondary" id="storage-detail"></div></div>
       </section>
 
       <section class="card">
@@ -329,6 +330,14 @@
         $("synced").textContent = status.stats.totals.synced;
         $("pending").textContent = status.stats.totals.pending;
         $("failed").textContent = status.stats.totals.failed;
+
+        const storage = status.storage;
+        $("storage").innerHTML = storage
+          ? `${storage.overThreshold ? statusDot("failed") : ""}${storage.usedMb} MB`
+          : "–";
+        $("storage-detail").textContent = storage
+          ? `${storage.percent}% of ${storage.limitMb} MB`
+          : "size unavailable";
 
         renderChart(status.stats.perDay);
         renderSchedulers(status.schedulers);

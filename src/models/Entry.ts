@@ -5,7 +5,11 @@ export interface IEntry extends Document {
   title?: string;
   author?: string;
   summary?: string;
-  content: string;
+  // Article HTML: gzipped since 1.6.0, plain string on older rows
+  content?: string;
+  contentGzip?: Buffer;
+  // Size of the HTML before compression, kept for the storage stats
+  contentBytes?: number;
   link: string;
   // Page exists in Notion
   created?: boolean;

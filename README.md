@@ -111,6 +111,14 @@ Notion does the downloading, so nothing streams through the Pi. It costs a coupl
 
 Pages written before this keep their original links; re-syncing doesn't rewrite a page that already has content.
 
+## Stored articles and database size
+
+Article HTML is stored gzipped, which is about a third of its size, and read back through `readContent` in [entryContent.ts](src/models/entryContent.ts). Rows written before this are plain text and still read fine; `pnpm compress-content` converts them (dry run unless `--apply`).
+
+The HTML is kept because it's what lets `POST /api/resync` rewrite a Notion page without crawling the article again. Setting `CONTENT_RETENTION_DAYS` makes the hourly sweep drop it once an article is in Notion and older than that many days — it saves space at the cost of that ability, and it's off by default.
+
+The dashboard shows what the database occupies, and the daily report includes a line for it. Past `STORAGE_WARN_PERCENT` (70%) of `STORAGE_LIMIT_MB` (512 MB, the free tier), the report treats it as something needing attention. For scale: the database currently holds ~850 articles in 5.6 MB and grows about 11 MB a year.
+
 ## Knowing when it's down
 
 Every alarm above assumes the app is running. If the container stops, the Pi loses power or the network drops, nothing can report it — silence looks exactly like a quiet day.
@@ -134,6 +142,7 @@ pnpm dev          # starts everything, dashboard on http://localhost:3000
 | `pnpm notion-sync` | Syncs everything not yet in Notion, then exits. |
 | `pnpm report` | Sends the report now. |
 | `pnpm retry-failed` | Queues failed crawls and syncs again. |
+| `pnpm compress-content` | Compresses article HTML on rows written before compression. Dry run unless `--apply`. |
 | `pnpm fix-notion-duplicates` | Cleans up duplicate pages from earlier imports: archives content-free copies, and completes hand-made pages (author, entry date, summary) while archiving their generated twins. Dry run unless `--apply`. |
 | `pnpm reimport-notion` | Finds Notion pages with no author and no entry date (a failed manual import) and fills them in, updating each page in place. Dry run unless `--apply`; see the [script](src/scripts/reimport-from-notion.ts) for options. |
 | `pnpm test` | Jest (needs MongoDB and Redis; uses separate test databases). |
@@ -170,6 +179,8 @@ See [`.env.example`](.env.example) for the full list. The ones that matter most:
 | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | – | Without them, no report or alert is sent. |
 | `HEALTHCHECK_PING_URL` | – | External watchdog pinged after each discovery. See [Knowing when it's down](#knowing-when-its-down). |
 | `NOTION_HOST_IMAGES` | true | Store images in Notion instead of hotlinking. See [Images](#images). |
+| `STORAGE_LIMIT_MB`, `STORAGE_WARN_PERCENT` | 512, 70 | When to warn about database size. |
+| `CONTENT_RETENTION_DAYS` | 0 | Drop stored HTML this many days after an article reaches Notion. 0 keeps it. |
 | `CRAWLER_INTERVAL` | `*/15 * * * *` | How often new articles are discovered. |
 | `TZ` | `America/Mexico_City` | Schedules and displayed dates. **Wrong value = wrong article dates.** |
 | `BROWSER_TIMEOUT_MS` | `180000` | Raise it if a slow Pi times out starting Chromium. |

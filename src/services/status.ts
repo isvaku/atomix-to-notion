@@ -1,6 +1,7 @@
 import { config } from "../config";
 import { EntryModel } from "../models";
 import { notionJobId } from "../queue/links";
+import { getStorageUsage } from "./storage";
 import {
   SCHEDULERS,
   crawlQueue,
@@ -49,6 +50,7 @@ export async function getStatus() {
 
   const [
     schedulers,
+    storage,
     crawlCounts,
     syncCounts,
     perDay,
@@ -61,6 +63,7 @@ export async function getStatus() {
     recentEntries,
   ] = await Promise.all([
     getSchedulerStatus(),
+    getStorageUsage(),
     crawlQueue.getJobCounts(...JOB_STATES),
     notionSyncQueue.getJobCounts(...JOB_STATES),
     EntryModel.aggregate<{ _id: string; count: number }>([
@@ -95,6 +98,7 @@ export async function getStatus() {
   return {
     generatedAt: now,
     schedulers,
+    storage,
     queues: { crawl: crawlCounts, notionSync: syncCounts },
     stats: {
       perDay: perDay.map((day) => ({ date: day._id, count: day.count })),

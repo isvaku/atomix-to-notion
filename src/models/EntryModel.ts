@@ -21,9 +21,18 @@ const EntrySchema: Schema = new Schema(
       type: String,
       required: false,
     },
+    // Plain content only exists on rows written before compression
     content: {
       type: String,
-      required: true,
+      required: false,
+    },
+    contentGzip: {
+      type: Buffer,
+      required: false,
+    },
+    contentBytes: {
+      type: Number,
+      required: false,
     },
     link: {
       type: String,

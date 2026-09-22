@@ -2,6 +2,7 @@ import { config } from "../config";
 import { EntryModel } from "../models";
 import { crawlQueue, notionSyncQueue } from "../queue/queues";
 import { logger } from "../utils/logger";
+import { getStorageUsage } from "./storage";
 import {
   ReportData,
   buildReport,
@@ -29,6 +30,7 @@ export async function collectReportData(now: Date = new Date()): Promise<ReportD
       crawlQueue.getJobCounts("waiting", "active", "delayed", "failed"),
       notionSyncQueue.getJobCounts("waiting", "active", "delayed"),
     ]);
+  const storage = await getStorageUsage();
 
   const failedCrawls = failedJobs
     .filter((job) => (job.finishedOn ?? 0) >= since.getTime())
@@ -47,6 +49,7 @@ export async function collectReportData(now: Date = new Date()): Promise<ReportD
     savedCount,
     pendingCrawls: (crawlCounts.waiting ?? 0) + (crawlCounts.active ?? 0) + (crawlCounts.delayed ?? 0),
     pendingSyncs: (syncCounts.waiting ?? 0) + (syncCounts.active ?? 0) + (syncCounts.delayed ?? 0),
+    storage,
   };
 }
 

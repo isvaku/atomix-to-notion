@@ -14,6 +14,7 @@ export interface ReportData {
   savedCount: number;
   pendingCrawls: number;
   pendingSyncs: number;
+  storage: { usedMb: number; limitMb: number; percent: number; overThreshold: boolean } | null;
 }
 
 export function escapeHtml(value: string): string {
@@ -21,7 +22,12 @@ export function escapeHtml(value: string): string {
 }
 
 export function reportNeedsAttention(data: ReportData): boolean {
-  return data.failedSyncs.length > 0 || data.failedCrawls.length > 0 || data.savedCount === 0;
+  return (
+    data.failedSyncs.length > 0 ||
+    data.failedCrawls.length > 0 ||
+    data.savedCount === 0 ||
+    data.storage?.overThreshold === true
+  );
 }
 
 function listSection<T>(items: T[], render: (item: T) => string): string[] {
@@ -41,7 +47,15 @@ export function buildReport(data: ReportData): string {
       ? "⚠️ <b>No articles saved in the last 24h.</b> The crawler may be blocked (Cloudflare) or the site changed."
       : `✅ Articles saved in the last 24h: <b>${data.savedCount}</b>`
   );
-  lines.push(`Queued: ${data.pendingCrawls} to crawl, ${data.pendingSyncs} to sync`, "");
+  lines.push(`Queued: ${data.pendingCrawls} to crawl, ${data.pendingSyncs} to sync`);
+
+  if (data.storage) {
+    const { usedMb, limitMb, percent, overThreshold } = data.storage;
+    lines.push(
+      `${overThreshold ? "⚠️ " : ""}Database: ${usedMb} MB of ${limitMb} MB (${percent}%)`
+    );
+  }
+  lines.push("");
 
   lines.push(
     `<b>Failed Notion syncs (24h): ${data.failedSyncs.length}</b> — ${data.failedSyncTotal} failed in total`

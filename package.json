@@ -1,6 +1,6 @@
 {
 	"name": "atomix-to-notion",
-	"version": "1.5.0",
+	"version": "1.6.0",
 	"description": "Atomix news crawler that queues articles and syncs them to Notion",
 	"main": "dist/index.js",
 	"scripts": {
@@ -18,7 +18,8 @@
 		"build-docker-image": "docker build -t isvaku/$npm_package_name:$npm_package_version -t isvaku/$npm_package_name:latest .",
 		"push-docker-image": "docker push isvaku/$npm_package_name --all-tags",
 		"reimport-notion": "tsx src/scripts/reimport-from-notion.ts",
-		"fix-notion-duplicates": "tsx src/scripts/fix-notion-duplicates.ts"
+		"fix-notion-duplicates": "tsx src/scripts/fix-notion-duplicates.ts",
+		"compress-content": "tsx src/scripts/compress-content.ts"
 	},
 	"keywords": [
 		"gaming",

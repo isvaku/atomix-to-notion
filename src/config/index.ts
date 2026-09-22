@@ -49,6 +49,17 @@ export const config = {
     },
   },
 
+  // Stored articles
+  storage: {
+    // The plan's free tier is 512 MB; used to warn before it matters
+    limitMb: int(process.env.STORAGE_LIMIT_MB, 512),
+    warnPercent: int(process.env.STORAGE_WARN_PERCENT, 70),
+    // 0 keeps article HTML forever. Set a number of days and the sweep drops
+    // it once the article is in Notion - saves space, but the page can then
+    // only be rewritten by crawling the article again.
+    contentRetentionDays: int(process.env.CONTENT_RETENTION_DAYS, 0),
+  },
+
   // Redis (BullMQ queues)
   redis: {
     url: process.env.REDIS_URL || "redis://localhost:6379",

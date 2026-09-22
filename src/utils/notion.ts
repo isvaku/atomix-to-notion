@@ -9,6 +9,7 @@ import { MAX_RICH_TEXT_LENGTH } from "./constants";
 import { config } from "../config";
 import { logger } from "./logger";
 import { IEntry } from "../models";
+import { readContent } from "../models/entryContent";
 
 // Notion rejects rich text arrays longer than this in a single block
 const MAX_RICH_TEXT_ITEMS = 100;
@@ -471,7 +472,8 @@ export class NotionClient {
     }
 
     const properties = this.buildProperties(entry);
-    const parsed = entry.content ? htmlToBlocks(entry.content, entry.link) : [];
+    const html = readContent(entry);
+    const parsed = html ? htmlToBlocks(html, entry.link) : [];
     const children = await this.hostImages(parsed);
     const existingPageId = await this.findPageByLink(entry.link);
 

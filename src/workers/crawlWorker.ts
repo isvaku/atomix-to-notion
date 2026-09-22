@@ -1,6 +1,7 @@
 import { Job, UnrecoverableError, Worker } from "bullmq";
 import { config } from "../config";
 import { EntryModel } from "../models";
+import { packContent } from "../models/entryContent";
 import { workerConnection } from "../queue/connection";
 import { CrawlJobData, QUEUE_NAMES, enqueueNotionSync } from "../queue/queues";
 import { WebScraper } from "../utils/scraper";
@@ -41,7 +42,7 @@ export async function processCrawlJob(
       title: article.title,
       author: article.author,
       summary: article.summary,
-      content: article.content,
+      ...packContent(article.content),
       link,
       created: false,
       entryErrors: [],

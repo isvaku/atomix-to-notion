@@ -9,6 +9,7 @@ import { CrawlJobData } from "../queue/queues";
 import { processCrawlJob } from "../workers/crawlWorker";
 import { processNotionSyncJob } from "../workers/notionSyncWorker";
 import { ScrapedArticle } from "../utils/scraper";
+import { readContent } from "../models/entryContent";
 
 const LINK = "https://atomix.vg/an-article";
 
@@ -55,6 +56,10 @@ describe("crawl worker", () => {
 
     const entry = await EntryModel.findOne({ link: LINK });
     expect(entry?.title).toBe("An article");
+    // Stored compressed, with the original size recorded
+    expect(entry?.content).toBeUndefined();
+    expect(readContent(entry!)).toBe("<p>Body</p>");
+    expect(entry?.contentBytes).toBe("<p>Body</p>".length);
     expect(entry?.created).toBe(false);
     expect(result.entryId).toBe(String(entry?._id));
     expect(await notionSyncQueue.getJob(notionJobId(String(entry?._id)))).toBeDefined();

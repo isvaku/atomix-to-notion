@@ -37,6 +37,27 @@ export async function discover(
   return { found, queued };
 }
 
+/**
+ * Drops the stored HTML of articles that are safely in Notion and older than
+ * CONTENT_RETENTION_DAYS. Off unless that's set, because it costs the ability
+ * to rewrite a page without crawling the article again.
+ */
+export async function dropOldContent(): Promise<number> {
+  const days = config.storage.contentRetentionDays;
+  if (days <= 0) return 0;
+
+  const before = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+  const result = await EntryModel.updateMany(
+    { created: true, entryDate: { $lt: before }, contentGzip: { $exists: true } },
+    { $unset: { contentGzip: 1, content: 1 } }
+  );
+
+  if (result.modifiedCount > 0) {
+    logger.info(`Dropped stored HTML for ${result.modifiedCount} entries older than ${days} days`);
+  }
+  return result.modifiedCount;
+}
+
 /** Queues entries that never made it to Notion (e.g. jobs lost with Redis data). */
 export async function sweepUnsynced(): Promise<MaintenanceResult> {
   const entries = await EntryModel.find({ created: false, failed: { $ne: true } })
@@ -55,7 +76,9 @@ export async function sweepUnsynced(): Promise<MaintenanceResult> {
   if (queued > 0) {
     logger.info(`Sweep: queued ${queued} unsynced entries for Notion`);
   }
-  return { unsynced: entries.length, queued };
+
+  const contentDropped = await dropOldContent();
+  return { unsynced: entries.length, queued, contentDropped };
 }
 
 export function createMaintenanceWorker(scraper: WebScraper): Worker {
