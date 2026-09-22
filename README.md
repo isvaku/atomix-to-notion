@@ -103,6 +103,14 @@ Discovery failures don't wait for the daily report: they trigger a Telegram mess
 
 The report goes out daily at 09:00 (`REPORT_INTERVAL`), but **only when something needs attention**: a failed sync, a failed crawl, or no articles saved in 24 hours (which is how a Cloudflare or site change shows up). Set `REPORT_ALWAYS=true` to get it every day regardless. Test it with `pnpm report` or the dashboard's "Send report".
 
+## Images
+
+Article images would otherwise be hotlinked to `blob.atomix.vg`: if those URLs ever change, every page silently loses its pictures. Instead each image is handed to Notion, which fetches it and stores it itself, and the block then points at Notion's own copy.
+
+Notion does the downloading, so nothing streams through the Pi. It costs a couple of seconds per image on the first sync of an article, and an image that can't be fetched falls back to the original link rather than failing the sync. Set `NOTION_HOST_IMAGES=false` to keep hotlinking.
+
+Pages written before this keep their original links; re-syncing doesn't rewrite a page that already has content.
+
 ## Knowing when it's down
 
 Every alarm above assumes the app is running. If the container stops, the Pi loses power or the network drops, nothing can report it — silence looks exactly like a quiet day.
@@ -161,6 +169,7 @@ See [`.env.example`](.env.example) for the full list. The ones that matter most:
 | `NOTION_TOKEN`, `NOTION_DATABASE_ID` | – | Without them, Notion sync stays off. |
 | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | – | Without them, no report or alert is sent. |
 | `HEALTHCHECK_PING_URL` | – | External watchdog pinged after each discovery. See [Knowing when it's down](#knowing-when-its-down). |
+| `NOTION_HOST_IMAGES` | true | Store images in Notion instead of hotlinking. See [Images](#images). |
 | `CRAWLER_INTERVAL` | `*/15 * * * *` | How often new articles are discovered. |
 | `TZ` | `America/Mexico_City` | Schedules and displayed dates. **Wrong value = wrong article dates.** |
 | `BROWSER_TIMEOUT_MS` | `180000` | Raise it if a slow Pi times out starting Chromium. |

@@ -108,6 +108,11 @@ export const config = {
     maxAttempts: int(process.env.NOTION_SYNC_MAX_ATTEMPTS, 5),
     // Notion allows ~3 requests per second
     rateLimitPerSecond: 3,
+    // Copy article images into Notion instead of linking to the source CDN, so
+    // pages keep their images if those URLs change
+    hostImages: process.env.NOTION_HOST_IMAGES !== "false",
+    // How long to wait for Notion to fetch one image before falling back
+    imageUploadTimeoutMs: int(process.env.NOTION_IMAGE_TIMEOUT_MS, 30000),
   },
 
   // Alerting

@@ -18,6 +18,38 @@ const BLOCKS_PER_REQUEST = 100;
 const MAX_TOTAL_BLOCKS = 500;
 // Notion rejects URLs longer than this
 const MAX_URL_LENGTH = 2000;
+// Gap between upload requests, to stay under Notion's ~3 per second
+const UPLOAD_REQUEST_GAP_MS = 350;
+
+const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+const CONTENT_TYPES: Record<string, string> = {
+  webp: "image/webp",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  png: "image/png",
+  gif: "image/gif",
+  avif: "image/avif",
+};
+
+/** Filename and content type for an image URL, or null if it isn't one Notion takes. */
+export function describeImage(url: string): { filename: string; contentType: string } | null {
+  let pathname: string;
+  try {
+    pathname = new URL(url).pathname;
+  } catch {
+    return null;
+  }
+
+  const name = pathname.split("/").pop() ?? "";
+  const extension = name.split(".").pop()?.toLowerCase() ?? "";
+  const contentType = CONTENT_TYPES[extension];
+  if (!contentType) return null;
+
+  // Notion rejects very long names; keep it recognisable
+  const filename = name.replace(/[^\w.-]/g, "_").slice(-100);
+  return { filename, contentType };
+}
 
 export type RichText = {
   type: "text";
@@ -338,6 +370,80 @@ export class NotionClient {
     return results[0]?.id ?? null;
   }
 
+  /**
+   * Has Notion fetch an image and hold it itself, returning the upload id.
+   * Returns null when it can't, and the caller keeps the original link.
+   */
+  private async hostImage(url: string): Promise<string | null> {
+    const described = describeImage(url);
+    if (!described) return null;
+
+    try {
+      const upload = await this.notion.fileUploads.create({
+        mode: "external_url",
+        external_url: url,
+        filename: described.filename,
+        content_type: described.contentType,
+      });
+
+      const deadline = Date.now() + config.notionSync.imageUploadTimeoutMs;
+      let status = upload.status;
+      let id = upload.id;
+
+      while (status === "pending" && Date.now() < deadline) {
+        await sleep(UPLOAD_REQUEST_GAP_MS);
+        const current = await this.notion.fileUploads.retrieve({ file_upload_id: id });
+        status = current.status;
+        id = current.id;
+      }
+
+      if (status !== "uploaded") {
+        logger.warn(`Notion did not take image ${url} (status ${status}), keeping the link`);
+        return null;
+      }
+      return id;
+    } catch (error) {
+      // An image is never worth failing the sync over
+      logger.warn(`Could not hand image ${url} to Notion, keeping the link:`, error);
+      return null;
+    }
+  }
+
+  /** Swaps linked images for ones Notion holds, so pages survive the source CDN. */
+  private async hostImages(blocks: BlockObjectRequest[]): Promise<BlockObjectRequest[]> {
+    if (!config.notionSync.hostImages) return blocks;
+
+    const uploaded = new Map<string, string>();
+    const result: BlockObjectRequest[] = [];
+
+    for (const block of blocks) {
+      const image = (block as { type?: string; image?: { external?: { url: string } } }).image;
+      const url = (block as { type?: string }).type === "image" ? image?.external?.url : undefined;
+
+      if (!url) {
+        result.push(block);
+        continue;
+      }
+
+      // The same image can appear twice in one article
+      const id = uploaded.get(url) ?? (await this.hostImage(url));
+      if (!id) {
+        result.push(block);
+        continue;
+      }
+      uploaded.set(url, id);
+
+      result.push({
+        object: "block",
+        type: "image",
+        image: { type: "file_upload", file_upload: { id } },
+      } as BlockObjectRequest);
+      await sleep(UPLOAD_REQUEST_GAP_MS);
+    }
+
+    return result;
+  }
+
   private async appendChunks(pageId: string, chunks: BlockObjectRequest[][]): Promise<void> {
     for (const chunk of chunks) {
       if (chunk.length === 0) continue;
@@ -365,7 +471,8 @@ export class NotionClient {
     }
 
     const properties = this.buildProperties(entry);
-    const children = entry.content ? htmlToBlocks(entry.content, entry.link) : [];
+    const parsed = entry.content ? htmlToBlocks(entry.content, entry.link) : [];
+    const children = await this.hostImages(parsed);
     const existingPageId = await this.findPageByLink(entry.link);
 
     const [firstChunk = [], ...restChunks] = chunkBlocks(children);
