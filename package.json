@@ -1,6 +1,6 @@
 {
 	"name": "atomix-to-notion",
-	"version": "1.6.0",
+	"version": "1.7.0",
 	"description": "Atomix news crawler that queues articles and syncs them to Notion",
 	"main": "dist/index.js",
 	"scripts": {
