@@ -115,7 +115,7 @@
 
     <main id="app" hidden>
       <header>
-        <h1>Atomix to Notion</h1>
+        <h1>Atomix to Notion <span class="note" id="version"></span></h1>
         <div class="actions">
           <span class="status" id="health"><span class="dot warn"></span> checking…</span>
           <button id="refresh">Refresh</button>
@@ -330,6 +330,9 @@
         $("synced").textContent = status.stats.totals.synced;
         $("pending").textContent = status.stats.totals.pending;
         $("failed").textContent = status.stats.totals.failed;
+
+        const v = status.version;
+        $("version").textContent = v ? `v${v.version}${v.commit ? ` (${v.commit})` : ""}` : "";
 
         const storage = status.storage;
         $("storage").innerHTML = storage

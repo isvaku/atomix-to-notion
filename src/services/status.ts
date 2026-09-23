@@ -1,3 +1,5 @@
+import { readFileSync } from "fs";
+import { join } from "path";
 import { config } from "../config";
 import { EntryModel } from "../models";
 import { notionJobId } from "../queue/links";
@@ -8,6 +10,17 @@ import {
   maintenanceQueue,
   notionSyncQueue,
 } from "../queue/queues";
+
+function readVersion(): string {
+  try {
+    return JSON.parse(readFileSync(join(__dirname, "../../package.json"), "utf8")).version;
+  } catch {
+    return "unknown";
+  }
+}
+
+const APP_VERSION = readVersion();
+const APP_COMMIT = process.env.GIT_SHA?.slice(0, 7) || null;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const RECENT_LIMIT = 20;
@@ -97,6 +110,7 @@ export async function getStatus() {
 
   return {
     generatedAt: now,
+    version: { version: APP_VERSION, commit: APP_COMMIT },
     schedulers,
     storage,
     queues: { crawl: crawlCounts, notionSync: syncCounts },

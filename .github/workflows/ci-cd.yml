@@ -101,6 +101,8 @@ jobs:
           platforms: linux/arm64
           context: .
           push: ${{ github.event_name == 'push' }}
+          build-args: |
+            GIT_SHA=${{ github.sha }}
           tags: |
             ${{ secrets.DOCKER_USERNAME }}/atomix-to-notion:latest
             ${{ secrets.DOCKER_USERNAME }}/atomix-to-notion:${{ steps.meta.outputs.version }}
